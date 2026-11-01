@@ -1,0 +1,90 @@
+name: Validate
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  schedule:
+    # Weekly, Monday 06:00 UTC: catches PHP release drift and base image changes.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: PHP Lint (${{ matrix.php }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ["8.0", "8.1", "8.2", "8.3", "8.4"]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          coverage: none
+
+      - name: Syntax check all PHP files
+        run: |
+          fail=0
+          while IFS= read -r -d '' f; do
+            php -l "$f" || fail=1
+          done < <(find . -name '*.php' -print0)
+          exit $fail
+
+      - name: Unit tests
+        run: php tests/unit.php
+
+  integration:
+    name: Integration (osTicket 1.18.4)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Start test stack
+        run: ./dev/up.sh
+
+      - name: Unit and integration suites
+        run: ./dev/test.sh
+
+      - name: Stop test stack
+        if: always()
+        run: ./dev/down.sh
+
+  actionlint:
+    name: Workflow lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: actionlint
+        uses: raven-actions/actionlint@v2
+
+  # Single aggregating context for the branch ruleset: required-status-check
+  # names are job names, and the lint matrix produces one per PHP version.
+  gate:
+    name: Gate
+    runs-on: ubuntu-latest
+    needs: [lint, integration, actionlint]
+    if: always()
+    steps:
+      - name: Fail unless every job succeeded
+        if: >-
+          contains(needs.*.result, 'failure') ||
+          contains(needs.*.result, 'cancelled') ||
+          contains(needs.*.result, 'skipped')
+        run: |
+          echo "lint=${{ needs.lint.result }}"
+          echo "integration=${{ needs.integration.result }}"
+          echo "actionlint=${{ needs.actionlint.result }}"
+          exit 1

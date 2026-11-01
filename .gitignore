@@ -1,0 +1,34 @@
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Backup / temp
+*.bak
+*.tmp
+*.log
+*~
+
+# Build output
+dist/
+*.zip
+
+# Test artefacts
+# The kill-switch file. tests/unit.php creates it for a moment and removes it
+# in a finally block; ignored so an aborted run never commits it.
+DISABLED
+
+# Local-only
+local/
+private/
+.drafts/
+
+# E2E
+node_modules/
+tests/e2e/package-lock.json.bak
