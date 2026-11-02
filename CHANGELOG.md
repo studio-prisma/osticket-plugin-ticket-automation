@@ -4,6 +4,11 @@ All notable changes to this project are documented here. Format: [Keep a Changel
 
 ## [Unreleased]
 
+### Changed
+
+- `LICENSE` contains only the GPL-2.0 text, so GitHub detects the licence.
+  Removed a header that wrongly claimed earlier releases were MIT-licensed.
+
 ## [0.1.0] - 2026-11-01
 
 ### Added
