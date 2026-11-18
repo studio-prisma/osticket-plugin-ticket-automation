@@ -60,9 +60,18 @@ Alle müssen zutreffen. Leere Listen heißen „beliebig“.
 | Priorität setzen | Über dasselbe Feldformular wie osTickets Dialog „Feld bearbeiten“ |
 | Fälligkeitsdatum | Behalten, leeren oder auf jetzt plus 1 bis 365 Tage setzen |
 | Als unbeantwortet markieren | |
+| Agenten bei passiv zugeordneter Mail benachrichtigen | Schickt osTickets Benachrichtigung „Neue Nachricht“, wenn osTicket still geblieben ist, siehe unten. Nur Nachrichten von Kunde und Beteiligten |
 | Interne Notiz | Wird immer geschrieben. Vorlage mit Platzhaltern, siehe unten |
 
 Es gibt keine Aktion, die dem Kunden mailt oder etwas löscht.
+
+#### Passiv zugeordnete Mail
+
+osTicket ordnet eine eingehende Mail einem Ticket über einen Bezug auf eine Mail des Helpdesks zu oder über die Ticketnummer im Betreff. Ein dritter Weg ist das „passive Threading“: Die Mail bezieht sich nur auf eine frühere Nachricht des Tickets, typischerweise wenn ein Kunde seine eigene erste Mail weiterleitet, statt zu antworten. osTicket nimmt eine solche Mail ins Ticket auf, schickt den Agenten aber **keine** Benachrichtigung „Neue Nachricht“ (`ThreadEntry::postEmail()` übergibt `autorespond=false`, `Ticket::postMessage()` endet vor der Benachrichtigung). Die Nachricht ist da, niemand erfährt davon.
+
+Mit „Agenten bei passiv zugeordneter Mail benachrichtigen“ schickt die Regel diese Benachrichtigung selbst: mit osTickets Vorlage, Absenderadresse und Empfänger-Einstellungen (letzter Bearbeiter, zuständiger Agent oder Team, Abteilungsleitung, Account-Manager). Positiv zugeordnete Mails bleiben unberührt, für sie benachrichtigt osTicket schon selbst. Unzustellbarkeits- und Abwesenheitsmeldungen benachrichtigen nie. Die interne Notiz nennt die Zahl der benachrichtigten Agenten; konnte niemand benachrichtigt werden, steht der Grund im Systemlog.
+
+Die Benachrichtigung geht nur raus, wenn die Regel läuft, also entscheiden ihre Bedingungen: Eine Regel nur für „Warten“-Status benachrichtigt nur bei Tickets in diesen Status.
 
 Mit dem Fälligkeits-Auslöser muss die Regel ihre eigene Bedingung beenden: ein Zielstatus, der nicht unter den aktuellen Status ist, oder das Fälligkeitsdatum leeren oder verschieben. Sonst griffe der nächste Cron-Lauf dasselbe Ticket wieder; eine solche Regel lässt sich nicht speichern.
 
@@ -148,6 +157,7 @@ Werden nicht automatisch angelegt. Statusnamen sind Beispiele.
 | Due date | behalten | behalten, leeren, setzen |
 | Days | 3 | 1 bis 365, mit „Set“ |
 | Mark unanswered | aus | osTicket macht das bei Kundennachrichten selbst |
+| Alert agents on passively matched mail | aus | Auslöser Kunde oder Beteiligte nötig |
 | Internal note | Standardtext | max. 2000 Zeichen |
 
 ## Bekannte Grenzen
@@ -159,6 +169,7 @@ Werden nicht automatisch angelegt. Statusnamen sind Beispiele.
 - **Agenten-Antwort und -Notiz als Auslöser:** Einen Status, den der Agent im Antwort- oder Notizformular wählt, setzt osTicket nach der Regel; die Wahl des Agenten gewinnt.
 - **Nachrichten an ein zusammengeführtes Unterticket** landen im Verlauf des Eltern-Tickets (osTicket-Verhalten); die Regel sieht das Eltern-Ticket.
 - **Ein Speichern, das die Regelprüfung ablehnt, kann beim Neuanlegen eine leere, deaktivierte Instanz hinterlassen** (osTicket legt die Instanz an, bevor es die Einstellungen speichert). Löschen oder die Einstellungen korrigieren.
+- **Passiv zugeordnete Mails werden so erkannt, wie osTicket 1.18.4 zuordnet** (Bezüge auf vom Helpdesk erzeugte Mails, dann auf beliebige gespeicherte Nachrichten). Ändert ein künftiges osTicket diese Logik, muss das Plugin geprüft werden.
 - **Kein Umsortieren.** Instanzen neu anlegen, um die Reihenfolge zu ändern.
 - Nicht getestet: osTicket 1.17 und älter, MySQL statt MariaDB, Mailabruf über IMAP/POP (der Pipe-Weg `api/pipe.php` ist getestet; beide enden in derselben `Ticket::postMessage()`).
 

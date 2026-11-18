@@ -384,6 +384,69 @@ step(array('action' => 'message', 'ticket' => $t['id'], 'user' => $ALICE));
 check('dry run: no change, no note, plan in the system log', statusOf($t['id']) === $S['wait_customer'] && !autoNotes($t['id'])
     && syslogCount('Dry run: rule "Dry"') === $before + 1);
 
+// ----------------------------------------- passively matched mail (forward)
+
+/** Subject and recipients of the newest mail in Mailpit. */
+function lastMail(): array
+{
+    $j = json_decode((string) @file_get_contents('http://mail:8025/api/v1/messages?limit=1'), true);
+    $m = $j['messages'][0] ?? array();
+    return array('subject' => (string) ($m['Subject'] ?? ''),
+        'to' => implode(',', array_map(fn($a) => (string) ($a['Address'] ?? ''), $m['To'] ?? array())));
+}
+
+function ticketByMid(string $mid): int
+{
+    return (int) scalar(sprintf("SELECT th.object_id FROM %s em JOIN %s e ON e.id=em.thread_entry_id
+        JOIN %s th ON th.id=e.thread_id WHERE em.mid=%s", THREAD_ENTRY_EMAIL_TABLE, THREAD_ENTRY_TABLE, THREAD_TABLE, db_input($mid)));
+}
+
+// The note template lists {changes}, which is where the alert is reported.
+rules(array('Customer replied' => array('act_alert_passive' => '1', 'act_note' => 'Rule "{rule}": {changes}') + $replyRule));
+$adminMail = (string) scalar(sprintf('SELECT email FROM %s WHERE staff_id=%d', STAFF_TABLE, $ADMIN));
+
+// The customer writes, the agent puts the ticket on "waiting", the customer
+// forwards their own first mail instead of answering the agent.
+$orig = '<orig-' . bin2hex(random_bytes(6)) . '@example.com>';
+$code = pipe("From: Alice Customer <alice@example.com>\r\nTo: helpdesk@example.com\r\nSubject: Press mailbox\r\n"
+    . "Message-ID: $orig\r\nDate: " . date('r') . "\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nIs there a press address?\r\n");
+$tid = ticketByMid($orig);
+q(sprintf('UPDATE %s SET status_id=%d, staff_id=%d WHERE ticket_id=%d', TICKET_TABLE, $S['wait_customer'], $ADMIN, $tid));
+$mailsBefore = mails();
+$code2 = pipe("From: Alice Customer <alice@example.com>\r\nTo: helpdesk@example.com\r\nSubject: Fwd: Press mailbox\r\n"
+    . "Message-ID: <fwd-" . bin2hex(random_bytes(6)) . "@example.com>\r\nReferences: $orig\r\n"
+    . "Date: " . date('r') . "\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nStill need it.\r\n\r\n---------- Forwarded ----------\r\nIs there a press address?\r\n");
+$notes = autoNotes($tid);
+$last = lastMail();
+check('passive forward: added to the ticket, status waiting -> open', $code === 0 && $code2 === 0 && $tid > 0
+    && statusOf($tid) === $S['open'], "code $code/$code2 ticket $tid status " . statusOf($tid));
+check('passive forward: exactly one alert mail, to the assigned agent', mails() === $mailsBefore + 1
+    && stripos($last['to'], $adminMail) !== false, "$mailsBefore -> " . mails() . ' ' . json_encode($last));
+check('passive forward: note reports the alert', count($notes) === 1
+    && strpos($notes[0]['body'], '"New Message" alert sent to 1 agent(s)') !== false, json_encode($notes));
+
+// Control: a real reply (ticket number in the subject) is matched positively;
+// osTicket alerts itself and the rule must not add a second mail.
+q(sprintf('UPDATE %s SET status_id=%d WHERE ticket_id=%d', TICKET_TABLE, $S['wait_customer'], $tid));
+$number = (string) col($tid, 'number');
+$mailsBefore = mails();
+$code = pipe("From: Alice Customer <alice@example.com>\r\nTo: helpdesk@example.com\r\nSubject: Re: [#$number] Press mailbox\r\n"
+    . "Message-ID: <re-" . bin2hex(random_bytes(6)) . "@example.com>\r\nDate: " . date('r')
+    . "\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nAnother reply.\r\n");
+$notes = autoNotes($tid);
+check('positive reply: osTicket\'s own alert only, no second mail', $code === 0 && mails() === $mailsBefore + 1
+    && count($notes) === 2 && strpos($notes[1]['body'], 'alert sent') === false, "$mailsBefore -> " . mails() . ' ' . json_encode($notes));
+
+// Option off: the forward stays silent, as in osTicket itself.
+rules(array('Customer replied' => $replyRule));
+q(sprintf('UPDATE %s SET status_id=%d WHERE ticket_id=%d', TICKET_TABLE, $S['wait_customer'], $tid));
+$mailsBefore = mails();
+pipe("From: Alice Customer <alice@example.com>\r\nTo: helpdesk@example.com\r\nSubject: Fwd: Press mailbox\r\n"
+    . "Message-ID: <fwd2-" . bin2hex(random_bytes(6)) . "@example.com>\r\nReferences: $orig\r\n"
+    . "Date: " . date('r') . "\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nForwarded again.\r\n");
+check('passive forward, option off: no mail (osTicket default)', mails() === $mailsBefore && statusOf($tid) === $S['open'],
+    "$mailsBefore -> " . mails());
+
 // --------------------------------------------------- disabled instance
 
 rules(array('Off' => $replyRule));

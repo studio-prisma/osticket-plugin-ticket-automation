@@ -24,6 +24,8 @@ declare(strict_types=1);
  *   due_action        'keep' | 'clear' | 'set'
  *   due_days          int   1..365, used with 'set'
  *   mark_unanswered   bool
+ *   alert_passive     bool  send osTicket's "New Message" alert when osTicket
+ *                           matched the mail only passively and stayed silent
  *   note              string template for the internal note, always written
  */
 final class TicketAutomationRule
@@ -44,8 +46,11 @@ final class TicketAutomationRule
     public const CONFIG_KEYS = array(
         'dry_run', 'trig_user', 'trig_collab', 'trig_reply', 'trig_note', 'trig_due', 'due_source',
         'cond_status', 'cond_dept', 'cond_topic', 'cond_assigned', 'skip_auto',
-        'act_status', 'act_priority', 'act_due', 'act_due_days', 'act_unanswered', 'act_note',
+        'act_status', 'act_priority', 'act_due', 'act_due_days', 'act_unanswered', 'act_alert_passive', 'act_note',
     );
+
+    /** Triggers whose entries arrive by mail and can be threaded passively. */
+    public const PASSIVE_TRIGGERS = array('user_message', 'collab_message');
 
     public const DEFAULT_NOTE = 'Rule "{rule}" ran on {trigger} from {sender}. {changes}';
     public const NOTE_MAX = 2000;
@@ -96,6 +101,7 @@ final class TicketAutomationRule
             'due_action'      => $dueAction,
             'due_days'        => self::days($raw['act_due_days'] ?? null),
             'mark_unanswered' => self::bool($raw['act_unanswered'] ?? false),
+            'alert_passive'   => self::bool($raw['act_alert_passive'] ?? false),
             'note'            => self::cut($note, self::NOTE_MAX),
         );
     }
@@ -153,6 +159,11 @@ final class TicketAutomationRule
             $errors['trig_due'] = 'With the due-date trigger the rule must move the ticket out of the condition: '
                 . 'set a status that is not among the current statuses, or clear or postpone the due date. '
                 . 'Otherwise it would run again on every cron call.';
+        }
+
+        if ($rule['alert_passive'] && empty($rule['triggers']['user_message']) && empty($rule['triggers']['collab_message'])) {
+            $errors['act_alert_passive'] = 'The alert for passively matched mail needs the customer or the collaborator '
+                . 'message trigger. Only those messages arrive by mail.';
         }
 
         if (array_key_exists('act_note', $raw) && self::length(trim((string) self::scalar($raw['act_note']))) > self::NOTE_MAX) {

@@ -170,6 +170,18 @@ class TicketAutomationConfig extends PluginConfig
                 'configuration' => array('desc' => 'osTicket does this itself on a customer message.'),
             )),
 
+            'act_alert_passive' => new BooleanField(array(
+                'label'         => 'Alert agents on passively matched mail',
+                'default'       => false,
+                'configuration' => array(
+                    'desc' => 'A forwarded mail or a new mail that only refers to an earlier message of the ticket '
+                            . '(no ticket number in the subject, no reference to a mail osTicket sent) is added to the '
+                            . 'ticket "passively": osTicket sends no "New Message" alert for it. With this on, the rule '
+                            . 'sends that alert itself, with osTicket\'s template and recipient settings. '
+                            . 'Message triggers only; bounces and auto-replies never.',
+                ),
+            )),
+
             'act_note' => new TextareaField(array(
                 'label'         => 'Internal note',
                 'default'       => TicketAutomationRule::DEFAULT_NOTE,

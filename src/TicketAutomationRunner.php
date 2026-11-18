@@ -39,6 +39,12 @@ final class TicketAutomationRunner
     /** @var array<string, true> "ticket:rule" already run in this request */
     private static $done = array();
 
+    /** @var callable(ThreadEntry): bool  passive-match check, replaceable in the unit tests */
+    public static $passiveCheck = array('TicketAutomationPassive', 'isPassive');
+
+    /** @var callable(Ticket, ThreadEntry): int  osTicket's "New Message" alert, replaceable in the unit tests */
+    public static $alerter = array('TicketAutomationPassive', 'newMessageAlert');
+
     public static function register(array $rule): void
     {
         self::$rules[(int) $rule['id']] = $rule;
@@ -111,7 +117,7 @@ final class TicketAutomationRunner
         $facts = self::facts($ticket);
         $rule = TicketAutomationMatcher::pick(self::rules(), $trigger, $facts, $auto);
         if ($rule) {
-            self::apply($rule, $ticket, $trigger, (string) $entry->getName(), $facts);
+            self::apply($rule, $ticket, $trigger, (string) $entry->getName(), $facts, $entry);
         }
     }
 
@@ -154,7 +160,7 @@ final class TicketAutomationRunner
 
     // --------------------------------------------------------------- apply
 
-    private static function apply(array $rule, Ticket $ticket, string $trigger, string $sender, array $facts): void
+    private static function apply(array $rule, Ticket $ticket, string $trigger, string $sender, array $facts, ?ThreadEntry $entry = null): void
     {
         $key = $ticket->getId() . ':' . $rule['id'];
         if (isset(self::$done[$key]) || count(self::$done) >= self::MAX_RUNS) {
@@ -179,9 +185,12 @@ final class TicketAutomationRunner
         $target = (int) $rule['set_status'];
         $newStatus = $target > 0 ? ($statuses[$target]['name'] ?? (string) $target) : $oldStatus;
 
+        // Read before anything changes the ticket; decides the alert below.
+        $passive = self::passive($rule, $trigger, $entry);
+
         if ($rule['dry_run']) {
             self::log(sprintf('Dry run: rule "%s" would run on ticket #%s (%s from %s): %s',
-                $rule['name'], $number, $label, $sender, implode('; ', self::plan($rule, $facts, $oldStatus, $newStatus))));
+                $rule['name'], $number, $label, $sender, implode('; ', self::plan($rule, $facts, $oldStatus, $newStatus, $passive))));
             return;
         }
 
@@ -233,6 +242,16 @@ final class TicketAutomationRunner
                 }
             }
 
+            if ($passive) {
+                // osTicket matched the mail passively and sent no alert.
+                $sent = (int) call_user_func(self::$alerter, $ticket, $entry);
+                $done[] = sprintf('Mail matched passively, osTicket sent no alert: "New Message" alert sent to %d agent(s)', $sent);
+                if ($sent === 0) {
+                    self::log(sprintf('Rule "%s" on ticket #%s: passively matched mail, but no agent could be alerted '
+                        . '(New Message alert off, no template, alert email or available recipient).', $rule['name'], $number));
+                }
+            }
+
             $changes = $done ? implode('; ', $done) . '.' : 'No change needed.';
             if ($failed) {
                 $changes .= ' Not applied: ' . implode('; ', $failed) . '.';
@@ -265,8 +284,24 @@ final class TicketAutomationRunner
         }
     }
 
+    /**
+     * Whether this run owes the agents the alert osTicket skipped: the rule
+     * asks for it, the entry is a mail message from the customer or a
+     * collaborator, not a bounce or auto-reply, and osTicket matched it
+     * passively.
+     */
+    private static function passive(array $rule, string $trigger, ?ThreadEntry $entry): bool
+    {
+        if (empty($rule['alert_passive']) || !$entry
+                || !in_array($trigger, TicketAutomationRule::PASSIVE_TRIGGERS, true)
+                || $entry->isBounceOrAutoReply()) {
+            return false;
+        }
+        return (bool) call_user_func(self::$passiveCheck, $entry);
+    }
+
     /** What a dry run reports. */
-    private static function plan(array $rule, array $facts, string $old, string $new): array
+    private static function plan(array $rule, array $facts, string $old, string $new, bool $passive = false): array
     {
         $out = array();
         if ((int) $rule['set_status'] > 0 && (int) $rule['set_status'] !== (int) $facts['status_id']) {
@@ -282,6 +317,9 @@ final class TicketAutomationRunner
         }
         if ($rule['mark_unanswered']) {
             $out[] = 'mark unanswered';
+        }
+        if ($passive) {
+            $out[] = 'New Message alert to agents (mail matched passively)';
         }
         $out[] = 'internal note';
         return $out;

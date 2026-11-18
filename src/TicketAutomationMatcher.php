@@ -136,6 +136,38 @@ final class TicketAutomationMatcher
         return trim(strtr($template, $map));
     }
 
+    /**
+     * Message IDs a mail refers to, in the order osTicket tries them
+     * (ThreadEntry::lookupByEmailHeaders(), osTicket 1.18.4): In-Reply-To,
+     * then References with the newest on the left, then a Ref-Mid embedded in
+     * the body. The mail's own Message-ID is left out: by the time a rule
+     * runs it is stored and would only find the new entry itself.
+     *
+     * @return string[] IDs without angle brackets, no duplicates
+     */
+    public static function referencedMids(string $inReplyTo, string $references, string $body, string $ownMid = ''): array
+    {
+        $own = trim($ownMid, " \t<>");
+        $mids = array();
+        foreach (array($inReplyTo, $references) as $header) {
+            $m = array();
+            if ($header !== '' && preg_match_all('/<([^>@]+@[^>]+)>/', $header, $m)) {
+                $mids = array_merge($mids, array_reverse($m[1]));
+            }
+        }
+        $m = array();
+        if (preg_match('`(?:class="mid-|Ref-Mid: )([^"\s]*)(?:$|")`', $body, $m) && $m[1] !== '') {
+            $mids[] = $m[1];
+        }
+        $out = array();
+        foreach ($mids as $mid) {
+            if ($mid !== $own && !in_array($mid, $out, true)) {
+                $out[] = $mid;
+            }
+        }
+        return $out;
+    }
+
     /** Human-readable trigger names for the note and the log. */
     public static function triggerLabel(string $trigger): string
     {
