@@ -4,6 +4,16 @@ All notable changes to this project are documented here. Format: [Keep a Changel
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-18
+
+### Added
+
+- Condition "Only passively matched mail": the rule runs only for mail osTicket added to the ticket passively. With it, closed statuses can be a condition, because osTicket does not reopen a ticket for such a mail. A last rule with this condition, all open and closed statuses, an open target status and the alert catches every passively matched mail without notes on ordinary replies.
+
+### Changed
+
+- Whether a message was matched passively is checked once per message, before the rules are picked, and only when a rule uses the condition or the alert.
+
 ## [0.2.0] - 2026-11-18
 
 ### Added
@@ -29,6 +39,7 @@ All notable changes to this project are documented here. Format: [Keep a Changel
 - Kill switch: a `DISABLED` file in the plugin folder stops every rule.
 - Unit tests without osTicket; integration suite against osTicket 1.18.4 in Docker, including mail piped through `api/pipe.php` and `api/cron.php`.
 
-[Unreleased]: https://github.com/studio-prisma/osticket-plugin-ticket-automation/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/studio-prisma/osticket-plugin-ticket-automation/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/studio-prisma/osticket-plugin-ticket-automation/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/studio-prisma/osticket-plugin-ticket-automation/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/studio-prisma/osticket-plugin-ticket-automation/releases/tag/v0.1.0

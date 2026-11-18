@@ -40,13 +40,21 @@ final class TicketAutomationCatalog
         return self::$statuses = $out;
     }
 
-    /** Open statuses for the condition picker, disabled ones marked. */
+    /**
+     * Statuses for the condition picker: open ones, then closed ones, which
+     * only a rule limited to passively matched mail may use. Disabled ones
+     * marked.
+     */
     public static function conditionChoices(): array
     {
         $out = array();
-        foreach (self::statuses() as $id => $s) {
-            if ($s['state'] === 'open') {
-                $out[(string) $id] = $s['name'] . ($s['enabled'] ? '' : ' (disabled)');
+        foreach (array('open', 'closed') as $state) {
+            foreach (self::statuses() as $id => $s) {
+                if ($s['state'] === $state) {
+                    $out[(string) $id] = $s['name']
+                        . ($state === 'closed' ? ' (closed: passive mail only)' : '')
+                        . ($s['enabled'] ? '' : ' (disabled)');
+                }
             }
         }
         return $out;

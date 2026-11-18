@@ -115,6 +115,9 @@ final class TicketAutomationRunner
         $auto = $entry->getType() === 'M' && $entry->isBounceOrAutoReply();
 
         $facts = self::facts($ticket);
+        // Checked once per message, and only when a rule asks about it.
+        $facts['passive'] = !$auto && self::wantsPassive($trigger)
+            && (bool) call_user_func(self::$passiveCheck, $entry);
         $rule = TicketAutomationMatcher::pick(self::rules(), $trigger, $facts, $auto);
         if ($rule) {
             self::apply($rule, $ticket, $trigger, (string) $entry->getName(), $facts, $entry);
@@ -185,8 +188,8 @@ final class TicketAutomationRunner
         $target = (int) $rule['set_status'];
         $newStatus = $target > 0 ? ($statuses[$target]['name'] ?? (string) $target) : $oldStatus;
 
-        // Read before anything changes the ticket; decides the alert below.
-        $passive = self::passive($rule, $trigger, $entry);
+        // Decided in handleEntry() before anything changed the ticket.
+        $passive = !empty($rule['alert_passive']) && !empty($facts['passive']) && $entry !== null;
 
         if ($rule['dry_run']) {
             self::log(sprintf('Dry run: rule "%s" would run on ticket #%s (%s from %s): %s',
@@ -285,19 +288,21 @@ final class TicketAutomationRunner
     }
 
     /**
-     * Whether this run owes the agents the alert osTicket skipped: the rule
-     * asks for it, the entry is a mail message from the customer or a
-     * collaborator, not a bounce or auto-reply, and osTicket matched it
-     * passively.
+     * Whether any rule needs to know if a customer or collaborator message
+     * was matched passively (condition or alert). Bounces and auto-replies
+     * are excluded by the caller.
      */
-    private static function passive(array $rule, string $trigger, ?ThreadEntry $entry): bool
+    private static function wantsPassive(string $trigger): bool
     {
-        if (empty($rule['alert_passive']) || !$entry
-                || !in_array($trigger, TicketAutomationRule::PASSIVE_TRIGGERS, true)
-                || $entry->isBounceOrAutoReply()) {
+        if (!in_array($trigger, TicketAutomationRule::PASSIVE_TRIGGERS, true)) {
             return false;
         }
-        return (bool) call_user_func(self::$passiveCheck, $entry);
+        foreach (self::$rules as $rule) {
+            if (!empty($rule['only_passive']) || !empty($rule['alert_passive'])) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** What a dry run reports. */

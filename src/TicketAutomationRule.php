@@ -14,9 +14,11 @@ declare(strict_types=1);
  *   id, name          instance ID and name
  *   dry_run           true: log what would happen, change nothing
  *   triggers          user_message, collab_message, agent_reply, internal_note, due  => bool
- *   statuses          int[] current status, at least one (open statuses only)
+ *   statuses          int[] current status, at least one (open statuses; closed
+ *                           ones only together with only_passive)
  *   depts, topics     int[] empty = any
  *   only_assigned     bool
+ *   only_passive      bool  run only for mail osTicket matched passively
  *   skip_auto         bool  ignore bounces and auto-replies (message triggers)
  *   due_source        'manual' | 'manual_or_sla'
  *   set_status        int   0 = keep
@@ -45,7 +47,7 @@ final class TicketAutomationRule
     /** Every stored setting of a rule, as named in TicketAutomationConfig. */
     public const CONFIG_KEYS = array(
         'dry_run', 'trig_user', 'trig_collab', 'trig_reply', 'trig_note', 'trig_due', 'due_source',
-        'cond_status', 'cond_dept', 'cond_topic', 'cond_assigned', 'skip_auto',
+        'cond_status', 'cond_dept', 'cond_topic', 'cond_assigned', 'cond_passive', 'skip_auto',
         'act_status', 'act_priority', 'act_due', 'act_due_days', 'act_unanswered', 'act_alert_passive', 'act_note',
     );
 
@@ -93,6 +95,7 @@ final class TicketAutomationRule
             'depts'           => self::ids($raw['cond_dept'] ?? null),
             'topics'          => self::ids($raw['cond_topic'] ?? null),
             'only_assigned'   => self::bool($raw['cond_assigned'] ?? false),
+            'only_passive'    => self::bool($raw['cond_passive'] ?? false),
             'skip_auto'       => array_key_exists('skip_auto', $raw) && $raw['skip_auto'] !== null
                                     ? self::bool($raw['skip_auto']) : true,
             'due_source'      => $dueSource,
@@ -127,9 +130,24 @@ final class TicketAutomationRule
             $errors['cond_status'] = 'Select at least one current status. A rule for every status is not supported on purpose.';
         }
         foreach ($rule['statuses'] as $sid) {
-            if (!isset($statuses[$sid]) || $statuses[$sid]['state'] !== 'open') {
-                $errors['cond_status'] = 'Only open statuses can be a condition. osTicket reopens closed tickets itself when a message arrives.';
+            $state = $statuses[$sid]['state'] ?? '';
+            if ($state === 'closed' && $rule['only_passive']) {
+                continue;
+            }
+            if ($state !== 'open') {
+                $errors['cond_status'] = $state === 'closed'
+                    ? 'A closed status can only be a condition together with "Only passively matched mail". '
+                        . 'Any other message reopens a closed ticket through osTicket itself.'
+                    : 'Only open statuses (and closed ones with "Only passively matched mail") can be a condition.';
                 break;
+            }
+        }
+
+        if ($rule['only_passive']) {
+            if (empty($rule['triggers']['user_message']) && empty($rule['triggers']['collab_message'])) {
+                $errors['cond_passive'] = '"Only passively matched mail" needs the customer or the collaborator message trigger.';
+            } elseif (!empty($rule['triggers']['due']) || !empty($rule['triggers']['agent_reply']) || !empty($rule['triggers']['internal_note'])) {
+                $errors['cond_passive'] = '"Only passively matched mail" works with the customer and collaborator message triggers only.';
             }
         }
 

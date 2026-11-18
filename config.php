@@ -96,7 +96,7 @@ class TicketAutomationConfig extends PluginConfig
                 'required'      => true,
                 'default'       => '',
                 'choices'       => TicketAutomationCatalog::conditionChoices(),
-                'hint'          => 'Required. Open statuses only.',
+                'hint'          => 'Required. Open statuses; closed ones only with "Only passively matched mail".',
                 'configuration' => $multi('Select statuses'),
             )),
 
@@ -118,6 +118,17 @@ class TicketAutomationConfig extends PluginConfig
                 'label'         => 'Only assigned tickets',
                 'default'       => false,
                 'configuration' => array('desc' => 'Assigned to an agent or a team.'),
+            )),
+
+            'cond_passive' => new BooleanField(array(
+                'label'         => 'Only passively matched mail',
+                'default'       => false,
+                'configuration' => array(
+                    'desc' => 'Run only for a mail osTicket added to the ticket "passively" (a forward or a new mail that '
+                            . 'only refers to an earlier message) and announced to nobody. Allows closed statuses as '
+                            . 'condition: osTicket does not reopen a ticket for such a mail. Customer and collaborator '
+                            . 'triggers only.',
+                ),
             )),
 
             'skip_auto' => new BooleanField(array(
