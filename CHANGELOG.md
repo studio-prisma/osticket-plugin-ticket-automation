@@ -4,6 +4,8 @@ All notable changes to this project are documented here. Format: [Keep a Changel
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-18
+
 ### Added
 
 - Action "Alert agents on passively matched mail": osTicket adds a mail that only refers to an earlier message of the ticket (a forward of the customer's own first mail, for example) "passively" and sends agents no "New Message" alert. With the action on, the rule sends that alert with osTicket's template and recipient settings. Positively matched mail, bounces and auto-replies are left alone. Off by default.
@@ -27,5 +29,6 @@ All notable changes to this project are documented here. Format: [Keep a Changel
 - Kill switch: a `DISABLED` file in the plugin folder stops every rule.
 - Unit tests without osTicket; integration suite against osTicket 1.18.4 in Docker, including mail piped through `api/pipe.php` and `api/cron.php`.
 
-[Unreleased]: https://github.com/studio-prisma/osticket-plugin-ticket-automation/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/studio-prisma/osticket-plugin-ticket-automation/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/studio-prisma/osticket-plugin-ticket-automation/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/studio-prisma/osticket-plugin-ticket-automation/releases/tag/v0.1.0
