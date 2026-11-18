@@ -9,7 +9,7 @@
 
 return array(
     'id'          => 'studio-prisma:ticket-automation',
-    'version'     => '0.2.0',
+    'version'     => '0.3.0',
     'ost_version' => '1.18',
     'name'        => 'Ticket Automation',
     'author'      => 'Studio Prisma',
