@@ -50,6 +50,7 @@ All must hold. Empty lists mean "any".
 | Department | Any of the selected |
 | Help topic | Any of the selected |
 | Only assigned tickets | Assigned to an agent or a team |
+| Only passively matched mail | The rule runs only for mail osTicket matched passively, see below. Allows closed statuses as condition |
 | Ignore bounces and auto-replies | Default on. Out-of-office replies and delivery failures don't count as a message. Detected from the mail headers with osTicket's own checks (`ThreadEntry::isBounceOrAutoReply()`) |
 
 ### Actions
@@ -72,6 +73,13 @@ osTicket matches an incoming mail to a ticket by a reference to a mail the help 
 With "Alert agents on passively matched mail" the rule sends that alert itself: osTicket's template, alert email and recipient settings (last respondent, assigned agent or team, department manager, account manager). Positively matched mail is left alone, osTicket alerts for it already. Bounces and auto-replies never alert. The internal note says how many agents were alerted; if nobody could be, the system log says why.
 
 The alert only goes out when the rule runs, so its conditions decide: a rule limited to "waiting" statuses alerts only for tickets in those statuses.
+
+osTicket also leaves a closed ticket closed when such a mail arrives. To catch every passively matched mail, add a last rule with the condition **Only passively matched mail**, all open and closed statuses, "Set status" to an open status and the alert on. It runs for nothing else, so ordinary replies get no extra note; osTicket alerts for those and reopens closed tickets itself.
+
+| Customer mail | Open ticket | Closed ticket |
+|---|---|---|
+| Ordinary reply | osTicket alerts | osTicket reopens and alerts |
+| Passively matched | silent in osTicket, the rule alerts | silent and closed in osTicket, the rule reopens and alerts |
 
 With the due-date trigger the rule has to end its own condition: a target status that isn't among the current statuses, or clearing or postponing the due date. Otherwise the next cron run would pick the same ticket again; such a rule can't be saved.
 
@@ -149,6 +157,7 @@ Not created automatically. Status names are examples; use yours.
 | Department | any | |
 | Help topic | any | |
 | Only assigned tickets | off | |
+| Only passively matched mail | off | customer or collaborator trigger only |
 | Ignore bounces and auto-replies | on | message triggers only |
 | Set status | keep | |
 | Set priority | keep | |
@@ -160,7 +169,7 @@ Not created automatically. Status names are examples; use yours.
 
 ## Known limits
 
-- **Only open statuses as condition.** On a customer message osTicket reopens a closed ticket itself, right after the rule has run. A rule on closed tickets would race against that.
+- **Only open statuses as condition**, unless the rule runs for passively matched mail only. On any other customer message osTicket reopens a closed ticket itself, right after the rule has run; a rule on closed tickets would race against that.
 - **Message triggers can't set a closed status**, for the same reason: osTicket would reopen the ticket immediately.
 - **The due-date trigger runs with cron.** With auto-cron only, it runs while agents have the panel open (at most every 3 minutes per agent). The delay is up to one cron interval.
 - **Up to 100 due tickets per rule per cron run**, oldest due date first; the rest follows on the next run.

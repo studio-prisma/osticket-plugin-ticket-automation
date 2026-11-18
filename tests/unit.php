@@ -645,6 +645,66 @@ $t = new Ticket(47, 1);
 TicketAutomationRunner::onThreadEntry(msg(47));
 check('runner: ticket outside the rule\'s statuses -> no alert (rule does not run)', $alertCalls === 0 && !$t->notes);
 
+// ------------------------------------- condition: only passively matched mail
+
+$cat = statuses();
+check('passive-only: closed status allowed as condition', $v(array('cond_status' => array(3 => 'x'), 'cond_passive' => true,
+    'act_status' => '1', 'act_alert_passive' => true)) === array(), json_encode($v(array('cond_status' => array(3 => 'x'), 'cond_passive' => true, 'act_status' => '1'))));
+check('passive-only: closed status without it still refused', isset($v(array('cond_status' => array(3 => 'x'), 'act_status' => '1'))['cond_status']));
+check('passive-only: needs a customer or collaborator trigger', isset($v(array('cond_status' => array(1 => 'x'),
+    'trig_user' => false, 'trig_reply' => true, 'cond_passive' => true))['cond_passive']));
+check('passive-only: not together with the due trigger', isset($v(array('cond_status' => array(1 => 'x'),
+    'trig_due' => true, 'act_due' => 'clear', 'cond_passive' => true))['cond_passive']));
+check('passive-only: archived status still refused', isset($v(array('cond_status' => array(5 => 'x'), 'cond_passive' => true))['cond_status']));
+$choices = TicketAutomationCatalog::conditionChoices();
+check('picker: closed statuses listed after the open ones, marked', isset($choices['3'])
+    && strpos($choices['3'], 'passive mail only') !== false && array_search(3, array_keys($choices), true) > array_search(1, array_keys($choices), true)
+    && !isset($choices['5']), json_encode($choices));
+
+$po = rule(array('cond_status' => array(1 => 'x', 3 => 'y'), 'cond_passive' => true, 'trig_collab' => true), 1);
+$mm = fn(array $t) => TicketAutomationMatcher::matches($po, 'user_message', $t);
+check('match: passive-only rule ignores a normal reply', !$mm(array('status_id' => 1, 'status_state' => 'open', 'passive' => false)));
+check('match: passive-only rule takes a passive mail', $mm(array('status_id' => 1, 'status_state' => 'open', 'passive' => true)));
+check('match: passive-only rule takes a closed ticket', $mm(array('status_id' => 3, 'status_state' => 'closed', 'passive' => true)));
+check('match: ordinary rule never takes a closed ticket', !TicketAutomationMatcher::matches(rule(array('cond_status' => array(3 => 'x'))), 'user_message',
+    array('status_id' => 3, 'status_state' => 'closed', 'passive' => true)));
+
+// Catch-all after the usual rule: open and closed, passive only, reopen.
+$catchAll = rule(array('cond_status' => array(1 => 'x', 3 => 'y'), 'cond_passive' => true, 'trig_collab' => true,
+    'act_status' => '1', 'act_alert_passive' => true), 2, 'Passive mail');
+$alertCalls = $passiveCalls = 0;
+$passiveAnswer = true;
+$alertAnswer = 1;
+resetRunner(array($alertRule, $catchAll));
+$t = new Ticket(50, 3);
+TicketAutomationRunner::onThreadEntry(msg(50));
+check('closed + passive: reopened to Open, agents alerted, one note', $t->status === 1 && $alertCalls === 1 && count($t->notes) === 1
+    && strpos($t->notes[0]['text'], 'Status: Closed -> Open') !== false, json_encode($t->notes));
+
+$alertCalls = 0;
+resetRunner(array($alertRule, $catchAll));
+$t = new Ticket(51, 1);
+TicketAutomationRunner::onThreadEntry(msg(51));
+check('open + passive: catch-all alerts, status stays', $t->status === 1 && $alertCalls === 1 && count($t->notes) === 1);
+
+$alertCalls = $passiveCalls = 0;
+$passiveAnswer = false;
+resetRunner(array($alertRule, $catchAll));
+$t = new Ticket(52, 1);
+TicketAutomationRunner::onThreadEntry(msg(52));
+check('open + normal reply: catch-all stays out, no note (osTicket alerts itself)', $passiveCalls === 1 && $alertCalls === 0 && !$t->notes);
+
+resetRunner(array($alertRule, $catchAll));
+$t = new Ticket(53, 6);
+TicketAutomationRunner::onThreadEntry(msg(53));
+check('waiting + normal reply: the usual rule still runs first', $t->status === 1 && count($t->notes) === 1 && $alertCalls === 0);
+
+$passiveCalls = 0;
+resetRunner(array($alertRule, $catchAll));
+$t = new Ticket(54, 3);
+TicketAutomationRunner::onThreadEntry(msg(54, array('auto' => true)));
+check('closed + auto-reply: not even checked, ticket stays closed', $passiveCalls === 0 && $t->status === 3 && !$t->notes);
+
 TicketAutomationRunner::$passiveCheck = array('TicketAutomationPassive', 'isPassive');
 TicketAutomationRunner::$alerter = array('TicketAutomationPassive', 'newMessageAlert');
 

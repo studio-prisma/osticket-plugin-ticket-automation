@@ -8,7 +8,8 @@ declare(strict_types=1);
  *
  * Entry facts:   type ('M', 'R', 'N', ...), user_id, staff_id, owner_id,
  *                system (bool), original (bool), auto (bool, bounce or auto-reply)
- * Ticket facts:  status_id, status_state, dept_id, topic_id, assigned (bool)
+ * Ticket facts:  status_id, status_state, dept_id, topic_id, assigned (bool),
+ *                passive (bool, the message was matched to the ticket passively)
  */
 final class TicketAutomationMatcher
 {
@@ -54,7 +55,14 @@ final class TicketAutomationMatcher
         if ($auto && $rule['skip_auto'] && $trigger !== 'due') {
             return false;
         }
-        if (($t['status_state'] ?? '') !== 'open') {
+        $passiveOnly = !empty($rule['only_passive']);
+        if ($passiveOnly && empty($t['passive'])) {
+            return false;
+        }
+        // Closed tickets only for passively matched mail: osTicket leaves
+        // those closed. Any other message reopens the ticket itself.
+        $state = (string) ($t['status_state'] ?? '');
+        if ($state !== 'open' && !($state === 'closed' && $passiveOnly)) {
             return false;
         }
         if (!$rule['statuses'] || !in_array((int) ($t['status_id'] ?? 0), $rule['statuses'], true)) {

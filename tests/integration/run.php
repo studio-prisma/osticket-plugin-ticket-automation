@@ -447,6 +447,58 @@ pipe("From: Alice Customer <alice@example.com>\r\nTo: helpdesk@example.com\r\nSu
 check('passive forward, option off: no mail (osTicket default)', mails() === $mailsBefore && statusOf($tid) === $S['open'],
     "$mailsBefore -> " . mails());
 
+// ------------------------------- catch-all: only passively matched mail
+
+// Usual rule for the waiting statuses, then a catch-all for open and closed
+// tickets that runs only for passively matched mail and reopens.
+rules(array(
+    'Customer replied' => array('act_alert_passive' => '1', 'act_note' => 'Rule "{rule}": {changes}') + $replyRule,
+    'Passive mail' => array('trig_user' => '1', 'trig_collab' => '1', 'cond_passive' => '1', 'skip_auto' => '1',
+        'cond_status' => sel(array($S['open'], $S['closed'])), 'act_status' => sel(array($S['open'])),
+        'act_alert_passive' => '1', 'act_note' => 'Rule "{rule}": {changes}'),
+));
+
+/** Closes a ticket the way osTicket does it (status and closed timestamp). */
+function closeTicket(int $tid): void
+{
+    global $S;
+    q(sprintf('UPDATE %s SET status_id=%d, closed=NOW() WHERE ticket_id=%d', TICKET_TABLE, $S['closed'], $tid));
+}
+
+closeTicket($tid);
+$notesBefore = count(autoNotes($tid));
+$mailsBefore = mails();
+pipe("From: Alice Customer <alice@example.com>\r\nTo: helpdesk@example.com\r\nSubject: Fwd: Press mailbox\r\n"
+    . "Message-ID: <fwd3-" . bin2hex(random_bytes(6)) . "@example.com>\r\nReferences: $orig\r\n"
+    . "Date: " . date('r') . "\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nForwarded to a closed ticket.\r\n");
+$notes = autoNotes($tid);
+$last = lastMail();
+check('closed + passive forward: reopened to open', statusOf($tid) === $S['open'] && col($tid, 'reopened') !== null,
+    'status ' . statusOf($tid));
+check('closed + passive forward: one alert mail to the agent', mails() === $mailsBefore + 1 && stripos($last['to'], $adminMail) !== false,
+    "$mailsBefore -> " . mails() . ' ' . json_encode($last));
+check('closed + passive forward: note from the catch-all rule', count($notes) === $notesBefore + 1
+    && strpos(end($notes)['body'], 'Rule "Passive mail"') !== false && strpos(end($notes)['body'], 'alert sent to 1') !== false, json_encode(end($notes)));
+
+// Ordinary reply on an open ticket: osTicket alerts, the catch-all stays out.
+$notesBefore = count(autoNotes($tid));
+$mailsBefore = mails();
+pipe("From: Alice Customer <alice@example.com>\r\nTo: helpdesk@example.com\r\nSubject: Re: [#$number] Press mailbox\r\n"
+    . "Message-ID: <re2-" . bin2hex(random_bytes(6)) . "@example.com>\r\nDate: " . date('r')
+    . "\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nAnother reply on an open ticket.\r\n");
+check('open + ordinary reply: osTicket alert only, no note from the catch-all', mails() === $mailsBefore + 1
+    && count(autoNotes($tid)) === $notesBefore, "$mailsBefore -> " . mails());
+
+// Ordinary reply on a closed ticket: osTicket reopens and alerts itself.
+closeTicket($tid);
+$notesBefore = count(autoNotes($tid));
+$mailsBefore = mails();
+pipe("From: Alice Customer <alice@example.com>\r\nTo: helpdesk@example.com\r\nSubject: Re: [#$number] Press mailbox\r\n"
+    . "Message-ID: <re3-" . bin2hex(random_bytes(6)) . "@example.com>\r\nDate: " . date('r')
+    . "\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nReply to a closed ticket.\r\n");
+check('closed + ordinary reply: osTicket reopens and alerts, plugin stays out', statusOf($tid) === $S['open']
+    && mails() >= $mailsBefore + 1 && count(autoNotes($tid)) === $notesBefore, "$mailsBefore -> " . mails() . ' status ' . statusOf($tid));
+
 // --------------------------------------------------- disabled instance
 
 rules(array('Off' => $replyRule));

@@ -50,6 +50,7 @@ Alle müssen zutreffen. Leere Listen heißen „beliebig“.
 | Abteilung | Eine der gewählten |
 | Hilfethema | Eines der gewählten |
 | Nur zugewiesene Tickets | Einem Agenten oder Team zugewiesen |
+| Nur passiv zugeordnete Mail | Die Regel läuft nur für Mails, die osTicket passiv zugeordnet hat, siehe unten. Erlaubt geschlossene Status als Bedingung |
 | Bounces und Auto-Replies ignorieren | Standard an. Abwesenheitsnotizen und Unzustellbarkeitsmeldungen zählen nicht als Nachricht. Erkannt an den Mail-Headern mit osTickets eigener Prüfung (`ThreadEntry::isBounceOrAutoReply()`) |
 
 ### Aktionen
@@ -72,6 +73,13 @@ osTicket ordnet eine eingehende Mail einem Ticket über einen Bezug auf eine Mai
 Mit „Agenten bei passiv zugeordneter Mail benachrichtigen“ schickt die Regel diese Benachrichtigung selbst: mit osTickets Vorlage, Absenderadresse und Empfänger-Einstellungen (letzter Bearbeiter, zuständiger Agent oder Team, Abteilungsleitung, Account-Manager). Positiv zugeordnete Mails bleiben unberührt, für sie benachrichtigt osTicket schon selbst. Unzustellbarkeits- und Abwesenheitsmeldungen benachrichtigen nie. Die interne Notiz nennt die Zahl der benachrichtigten Agenten; konnte niemand benachrichtigt werden, steht der Grund im Systemlog.
 
 Die Benachrichtigung geht nur raus, wenn die Regel läuft, also entscheiden ihre Bedingungen: Eine Regel nur für „Warten“-Status benachrichtigt nur bei Tickets in diesen Status.
+
+Ein geschlossenes Ticket lässt osTicket bei einer solchen Mail außerdem geschlossen. Damit jede passiv zugeordnete Mail ankommt, eine letzte Regel anlegen: Bedingung **Only passively matched mail**, alle offenen und geschlossenen Status, „Set status“ auf einen offenen Status, Benachrichtigung an. Sie läuft für nichts anderes, normale Antworten bekommen also keine zusätzliche Notiz; für die benachrichtigt osTicket selbst und öffnet geschlossene Tickets selbst wieder.
+
+| Kundenmail | Offenes Ticket | Geschlossenes Ticket |
+|---|---|---|
+| Normale Antwort | osTicket benachrichtigt | osTicket öffnet und benachrichtigt |
+| Passiv zugeordnet | in osTicket still, die Regel benachrichtigt | in osTicket still und geschlossen, die Regel öffnet und benachrichtigt |
 
 Mit dem Fälligkeits-Auslöser muss die Regel ihre eigene Bedingung beenden: ein Zielstatus, der nicht unter den aktuellen Status ist, oder das Fälligkeitsdatum leeren oder verschieben. Sonst griffe der nächste Cron-Lauf dasselbe Ticket wieder; eine solche Regel lässt sich nicht speichern.
 
@@ -151,6 +159,7 @@ Werden nicht automatisch angelegt. Statusnamen sind Beispiele.
 | Department | beliebig | |
 | Help topic | beliebig | |
 | Only assigned tickets | aus | |
+| Only passively matched mail | aus | nur Auslöser Kunde oder Beteiligte |
 | Ignore bounces and auto-replies | an | nur Nachrichten-Auslöser |
 | Set status | behalten | |
 | Set priority | behalten | |
@@ -162,7 +171,7 @@ Werden nicht automatisch angelegt. Statusnamen sind Beispiele.
 
 ## Bekannte Grenzen
 
-- **Nur offene Status als Bedingung.** Bei einer Kundennachricht öffnet osTicket ein geschlossenes Ticket selbst wieder, direkt nachdem die Regel gelaufen ist. Eine Regel auf geschlossene Tickets liefe dagegen an.
+- **Nur offene Status als Bedingung**, außer die Regel läuft nur für passiv zugeordnete Mails. Bei jeder anderen Kundennachricht öffnet osTicket ein geschlossenes Ticket selbst wieder, direkt nachdem die Regel gelaufen ist; eine Regel auf geschlossene Tickets liefe dagegen an.
 - **Nachrichten-Auslöser können keinen geschlossenen Status setzen**, aus demselben Grund: osTicket würde das Ticket sofort wieder öffnen.
 - **Der Fälligkeits-Auslöser läuft mit Cron.** Nur mit Auto-Cron läuft er, solange Agenten das Panel offen haben (höchstens alle 3 Minuten pro Agent). Die Verzögerung beträgt bis zu ein Cron-Intervall.
 - **Bis zu 100 fällige Tickets pro Regel und Cron-Lauf**, älteste Fälligkeit zuerst; der Rest folgt im nächsten Lauf.
