@@ -4,6 +4,10 @@ All notable changes to this project are documented here. Format: [Keep a Changel
 
 ## [Unreleased]
 
+### Added
+
+- Action "Alert agents on passively matched mail": osTicket adds a mail that only refers to an earlier message of the ticket (a forward of the customer's own first mail, for example) "passively" and sends agents no "New Message" alert. With the action on, the rule sends that alert with osTicket's template and recipient settings. Positively matched mail, bounces and auto-replies are left alone. Off by default.
+
 ### Changed
 
 - `LICENSE` contains only the GPL-2.0 text, so GitHub detects the licence.

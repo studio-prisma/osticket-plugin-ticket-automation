@@ -60,9 +60,18 @@ All must hold. Empty lists mean "any".
 | Set priority | Through the same field form as osTicket's "edit field" dialog |
 | Due date | Keep, clear, or set to now plus 1 to 365 days |
 | Mark unanswered | |
+| Alert agents on passively matched mail | Sends osTicket's "New Message" alert when osTicket stayed silent, see below. Customer and collaborator messages only |
 | Internal note | Always written. Template with placeholders, see below |
 
 There are no actions that mail the customer or delete anything.
+
+#### Passively matched mail
+
+osTicket matches an incoming mail to a ticket by a reference to a mail the help desk sent, or by the ticket number in the subject. A third way is "passive threading": the mail only refers to an earlier message of the ticket, typically when a customer forwards their own first mail instead of answering. osTicket adds such a mail to the ticket but sends **no** "New Message" alert to the agents (`ThreadEntry::postEmail()` passes `autorespond=false`, `Ticket::postMessage()` returns before the alert). The message is there, nobody hears of it.
+
+With "Alert agents on passively matched mail" the rule sends that alert itself: osTicket's template, alert email and recipient settings (last respondent, assigned agent or team, department manager, account manager). Positively matched mail is left alone, osTicket alerts for it already. Bounces and auto-replies never alert. The internal note says how many agents were alerted; if nobody could be, the system log says why.
+
+The alert only goes out when the rule runs, so its conditions decide: a rule limited to "waiting" statuses alerts only for tickets in those statuses.
 
 With the due-date trigger the rule has to end its own condition: a target status that isn't among the current statuses, or clearing or postponing the due date. Otherwise the next cron run would pick the same ticket again; such a rule can't be saved.
 
@@ -146,6 +155,7 @@ Not created automatically. Status names are examples; use yours.
 | Due date | keep | keep, clear, set |
 | Days | 3 | 1 to 365, with "set" |
 | Mark unanswered | off | osTicket does it itself on customer messages |
+| Alert agents on passively matched mail | off | customer or collaborator trigger required |
 | Internal note | default text | max. 2000 characters |
 
 ## Known limits
@@ -157,6 +167,7 @@ Not created automatically. Status names are examples; use yours.
 - **Agent reply and note triggers:** a status the agent picks in the reply or note form is set by osTicket after the rule ran, so the agent's choice wins.
 - **Messages to a merged child ticket** land in the parent's thread (osTicket behaviour); the rule sees the parent.
 - **A save that the rule checks refuse can leave an empty, disabled instance** behind when adding a new one (osTicket creates the instance before saving its settings). Delete it or fix the settings.
+- **Passively matched mail is detected the way osTicket 1.18.4 matches it** (references to mails the help desk generated, then to any stored message). A future osTicket that changes this logic needs a check of the plugin.
 - **No reordering.** Recreate instances to change the order.
 - Not tested: osTicket 1.17 and older, MySQL instead of MariaDB, mail fetched over IMAP/POP (the piped mail path `api/pipe.php` is tested; both end in the same `Ticket::postMessage()`).
 

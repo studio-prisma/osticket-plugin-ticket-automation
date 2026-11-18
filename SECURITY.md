@@ -29,7 +29,8 @@ Expected response: an acknowledgement within 7 days, an assessment within 30. Th
 - **A loop or chain:** one event running more than one rule, or a rule running more than once per ticket per request.
 - **Mail to a customer** caused by the plugin itself, or an alert from the plugin's note.
 - **Markup or script from a sender name, ticket data or the note template** rendered as HTML in the ticket view.
-- **SQL injection** through rule settings into the due-date query.
+- **SQL injection** through rule settings into the due-date query, or through mail headers (In-Reply-To, References) into the passive-match lookup.
+- **An agent alert for a mail osTicket matched positively** (a second mail next to osTicket's own), or any alert to someone outside osTicket's recipient settings for the "New Message" alert.
 - **A failing rule breaking** the request that posted the message, reply or note, or the cron run.
 
 ## Out of Scope
@@ -38,7 +39,8 @@ Documented design decisions are not findings.
 
 - **Rules act as the system.** An agent whose reply triggers a rule doesn't need the permission for what the rule does; the admin who configured it decided that. Same as osTicket's own auto-cron.
 - **Status changes and notes are visible to agents** who can see the ticket. That's the purpose.
-- **Mails osTicket sends on its own** for the same event (auto-responses, collaborator notices, new-message alerts). The plugin doesn't add, suppress or change them.
+- **Mails osTicket sends on its own** for the same event (auto-responses, collaborator notices, new-message alerts). The plugin doesn't suppress or change them. It adds exactly one kind: the "New Message" alert for passively matched mail, when a rule has that action on.
+- **Someone who knows a Message-ID of a ticket can trigger agent alerts** by sending mail that refers to it. osTicket already adds such mail to the ticket (passive threading); the action only makes it visible, one alert per message, like any other customer message.
 - **Bounce and auto-reply detection** is osTicket's (`TicketFilter::isBounce()`, `isAutoReply()`). Mails that slip past it are an upstream topic.
 - Anything that requires admin access to osTicket or write access to the server.
 - **Bugs in osTicket itself.** Report those [upstream](https://github.com/osTicket/osTicket/security).

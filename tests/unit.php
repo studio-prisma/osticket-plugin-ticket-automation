@@ -20,6 +20,9 @@ define('DEPT_TABLE', 'ost_department');
 define('TOPIC_TABLE', 'ost_help_topic');
 define('PRIORITY_TABLE', 'ost_ticket_priority');
 define('THREAD_ENTRY_TABLE', 'ost_thread_entry');
+define('THREAD_ENTRY_EMAIL_TABLE', 'ost_thread_entry_email');
+
+require __DIR__ . '/stubs/class.mailer.php';
 
 // ------------------------------------------------------------ fake database
 
@@ -34,10 +37,26 @@ $GLOBALS['fake_statuses'] = array();
 $GLOBALS['fake_due'] = null;   // callable(string $sql): int[] ticket IDs
 $GLOBALS['fake_sql'] = array();
 $GLOBALS['fake_prior'] = 1;   // earlier messages in the thread
+$GLOBALS['fake_mids'] = array();     // stored Message-ID (with brackets) => thread entry ID
+$GLOBALS['fake_threads'] = array();  // thread entry ID => thread ID
+
+function db_input($v) { return "'" . addslashes((string) $v) . "'"; }
 
 function db_query($sql)
 {
     $GLOBALS['fake_sql'][] = $sql;
+    if (preg_match('/^SELECT thread_entry_id FROM ' . THREAD_ENTRY_EMAIL_TABLE . ' WHERE mid IN \((.*)\) AND thread_entry_id<>(\d+) LIMIT 1$/', $sql, $m)) {
+        foreach ($GLOBALS['fake_mids'] as $mid => $eid) {
+            if ($eid !== (int) $m[2] && strpos($m[1], db_input($mid)) !== false) {
+                return new FakeResult(array(array('thread_entry_id' => $eid)));
+            }
+        }
+        return new FakeResult(array());
+    }
+    if (preg_match('/^SELECT thread_id FROM ' . THREAD_ENTRY_TABLE . ' WHERE id=(\d+)$/', $sql, $m)) {
+        $tid = $GLOBALS['fake_threads'][(int) $m[1]] ?? null;
+        return new FakeResult($tid === null ? array() : array(array('thread_id' => $tid)));
+    }
     if (strpos($sql, 'FROM ' . TICKET_STATUS_TABLE) !== false && strpos($sql, 'SELECT id, name, state, mode') === 0) {
         return new FakeResult($GLOBALS['fake_statuses']);
     }
@@ -84,6 +103,9 @@ class ThreadEntry
     function hasFlag($f) { return ($this->ht['flags'] & $f) !== 0; }
     function isBounceOrAutoReply() { return (bool) $this->ht['auto']; }
     function getName() { return $this->ht['name']; }
+    function getEmailHeaderArray() { return $this->ht['headers'] ?? null; }
+    function getEmailMessageId() { return $this->ht['mid'] ?? ''; }
+    function getBody() { return $this->ht['body'] ?? ''; }
 }
 
 class FakeThread
@@ -522,6 +544,109 @@ if (is_writable($dir)) {
     // way to create the file either. Covered by the local run.
     echo "skip kill switch: plugin folder not writable\n";
 }
+
+// ------------------------------------------------- passively matched mail
+
+$rm = fn(...$a) => TicketAutomationMatcher::referencedMids(...$a);
+check('mids: In-Reply-To first, then References newest first', $rm('<a@x>', '<r1@x> <r2@x>', '') === array('a@x', 'r2@x', 'r1@x'));
+check('mids: own Message-ID and duplicates left out', $rm('<a@x>', '<a@x> <own@x>', '', '<own@x>') === array('a@x'));
+check('mids: Ref-Mid in the body counts', $rm('', '', "Hello\nRef-Mid: body@x") === array('body@x'));
+check('mids: headers without a valid ID give nothing', $rm('nonsense', '<no-at-sign>', 'plain text') === array());
+
+check('rule: passive alert off by default', rule(array())['alert_passive'] === false);
+check('rule: passive alert read from the setting', rule(array('act_alert_passive' => true))['alert_passive'] === true);
+check('rule: passive alert needs a customer or collaborator trigger', isset($v(array('cond_status' => array(6 => 'x'),
+    'trig_user' => false, 'trig_reply' => true, 'act_alert_passive' => true))['act_alert_passive']));
+check('rule: passive alert with the customer trigger is valid', $v($base + array('act_alert_passive' => true)) === array());
+
+// Detector against the fake email table.
+$GLOBALS['fake_mids'] = array('<first@customer.example>' => 301, '<new@customer.example>' => 302);
+$GLOBALS['fake_threads'] = array(290 => 1003);
+$fwd = msg(3, array('id' => 302, 'mid' => '<new@customer.example>',
+    'headers' => array('Subject' => 'Fwd: Question', 'References' => '<first@customer.example>')));
+check('passive: forward that only refers to the customer\'s own first mail', TicketAutomationPassive::isPassive($fwd));
+$own = msg(3, array('id' => 302, 'mid' => '<new@customer.example>', 'headers' => array('In-Reply-To' => '<new@customer.example>')));
+check('passive: a reference to the message itself does not count', !TicketAutomationPassive::isPassive($own));
+\osTicket\Mail\Mailer::$decoded = array('desk@helpdesk.example' => array('loopback' => true, 'uid' => 'u', 'entryId' => 290, 'threadId' => 1003));
+$reply = msg(3, array('id' => 302, 'mid' => '<new@customer.example>',
+    'headers' => array('In-Reply-To' => '<desk@helpdesk.example>', 'References' => '<first@customer.example> <desk@helpdesk.example>')));
+check('passive: a reply to a mail the help desk sent is a positive match', !TicketAutomationPassive::isPassive($reply));
+\osTicket\Mail\Mailer::$decoded = array('desk@helpdesk.example' => array('loopback' => true, 'uid' => 'u', 'entryId' => 290, 'threadId' => 9999));
+check('passive: help-desk ID of another thread is no positive match', TicketAutomationPassive::isPassive($reply));
+\osTicket\Mail\Mailer::$decoded = array();
+check('passive: web or API message without mail headers', !TicketAutomationPassive::isPassive(msg(3, array('id' => 303))));
+check('passive: unknown references only (osTicket would have opened a new ticket)', !TicketAutomationPassive::isPassive(
+    msg(3, array('id' => 302, 'headers' => array('References' => '<elsewhere@other.example>')))));
+check('passive: agent reply is never passive', !TicketAutomationPassive::isPassive(new ThreadEntry(array('type' => 'R', 'ticket' => 3,
+    'id' => 302, 'headers' => array('References' => '<first@customer.example>')))));
+$GLOBALS['fake_mids'] = array();
+$GLOBALS['fake_threads'] = array();
+
+// Runner with the seams replaced.
+$passiveCalls = $alertCalls = 0;
+$passiveAnswer = true;
+$alertAnswer = 1;
+TicketAutomationRunner::$passiveCheck = function () use (&$passiveCalls, &$passiveAnswer) { $passiveCalls++; return $passiveAnswer; };
+TicketAutomationRunner::$alerter = function () use (&$alertCalls, &$alertAnswer) { $alertCalls++; return $alertAnswer; };
+$alertRule = rule($base + array('act_alert_passive' => true, 'trig_collab' => true), 1, 'Customer replied');
+
+resetRunner(array($alertRule));
+$t = new Ticket(40, 6);
+TicketAutomationRunner::onThreadEntry(msg(40));
+check('runner: passive mail -> status changed and agents alerted once', $t->status === 1 && $alertCalls === 1);
+check('runner: the note reports the alert', count($t->notes) === 1
+    && strpos($t->notes[0]['text'], 'osTicket sent no alert: "New Message" alert sent to 1 agent(s)') !== false, $t->notes[0]['text'] ?? '');
+
+$alertCalls = 0;
+$passiveAnswer = false;
+resetRunner(array($alertRule));
+$t = new Ticket(41, 6);
+TicketAutomationRunner::onThreadEntry(msg(41));
+check('runner: positively matched mail -> no extra alert (osTicket sends its own)', $t->status === 1 && $alertCalls === 0
+    && strpos($t->notes[0]['text'], 'alert') === false);
+
+$alertCalls = $passiveCalls = 0;
+$passiveAnswer = true;
+resetRunner(array(rule($base, 1)));
+$t = new Ticket(42, 6);
+TicketAutomationRunner::onThreadEntry(msg(42));
+check('runner: option off -> not even checked', $passiveCalls === 0 && $alertCalls === 0);
+
+resetRunner(array(rule($base + array('act_alert_passive' => true, 'skip_auto' => false), 1)));
+$t = new Ticket(43, 6);
+TicketAutomationRunner::onThreadEntry(msg(43, array('auto' => true)));
+check('runner: auto-reply never alerts, even when the rule runs on it', $t->status === 1 && $alertCalls === 0);
+
+resetRunner(array(rule($base + array('act_alert_passive' => true, 'trig_collab' => true), 1)));
+$t = new Ticket(44, 6);
+TicketAutomationRunner::onThreadEntry(msg(44, array('user_id' => 11)));
+check('runner: collaborator mail matched passively alerts too', $alertCalls === 1);
+
+$alertCalls = 0;
+resetRunner(array(rule($base + array('act_alert_passive' => true, 'dry_run' => true), 1)));
+$t = new Ticket(45, 6);
+TicketAutomationRunner::onThreadEntry(msg(45));
+$logs = $GLOBALS['ost']->logs;
+check('dry run: alert only reported, not sent', $alertCalls === 0 && $t->status === 6 && count($logs) === 1
+    && strpos($logs[0][1], 'New Message alert to agents') !== false, json_encode($logs));
+
+$alertAnswer = 0;
+resetRunner(array($alertRule));
+$t = new Ticket(46, 6);
+TicketAutomationRunner::onThreadEntry(msg(46));
+$logs = $GLOBALS['ost']->logs;
+check('runner: nobody to alert -> logged as warning, rule still done', $t->status === 1 && count($t->notes) === 1
+    && count($logs) === 1 && strpos($logs[0][1], 'no agent could be alerted') !== false, json_encode($logs));
+
+$alertCalls = 0;
+$alertAnswer = 1;
+resetRunner(array($alertRule));
+$t = new Ticket(47, 1);
+TicketAutomationRunner::onThreadEntry(msg(47));
+check('runner: ticket outside the rule\'s statuses -> no alert (rule does not run)', $alertCalls === 0 && !$t->notes);
+
+TicketAutomationRunner::$passiveCheck = array('TicketAutomationPassive', 'isPassive');
+TicketAutomationRunner::$alerter = array('TicketAutomationPassive', 'newMessageAlert');
 
 echo "\n$count checks, $failures failed\n";
 exit($failures ? 1 : 0);
