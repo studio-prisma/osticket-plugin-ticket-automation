@@ -4,6 +4,8 @@ All notable changes to this project are documented here. Format: [Keep a Changel
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-23
+
 ### Changed
 
 - A run that changes nothing writes no internal note, for every trigger, not only the due date. Before, a message on a ticket the actions had nothing left to do for still got a "No change needed." note. If osTicket refused an action, the reason goes to the system log instead. A rule whose only action is the note still writes it on every run; a partial run still writes its note and lists what was not applied.
@@ -49,7 +51,8 @@ All notable changes to this project are documented here. Format: [Keep a Changel
 - Kill switch: a `DISABLED` file in the plugin folder stops every rule.
 - Unit tests without osTicket; integration suite against osTicket 1.18.4 in Docker, including mail piped through `api/pipe.php` and `api/cron.php`.
 
-[Unreleased]: https://github.com/studio-prisma/osticket-plugin-ticket-automation/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/studio-prisma/osticket-plugin-ticket-automation/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/studio-prisma/osticket-plugin-ticket-automation/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/studio-prisma/osticket-plugin-ticket-automation/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/studio-prisma/osticket-plugin-ticket-automation/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/studio-prisma/osticket-plugin-ticket-automation/releases/tag/v0.1.0

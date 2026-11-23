@@ -33,7 +33,7 @@ require_once __DIR__ . '/src/TicketAutomationRunner.php';
 
 class TicketAutomationPlugin extends Plugin
 {
-    public const VERSION = '0.3.0';
+    public const VERSION = '0.4.0';
 
     var $config_class = 'TicketAutomationConfig';
 
