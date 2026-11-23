@@ -10,6 +10,7 @@ php tests/unit.php
 |---|---|
 | `TicketAutomationRule::normalise` | defaults (only the customer trigger on, bounces ignored, nothing changes), every shape a choice value arrives in (multiselect, JSON, single key, list, comma list), junk and negative IDs dropped, clamps for days and note length, every config field read at bootstrap |
 | `TicketAutomationRule::validate` | status condition required and open only, disabled/unknown/archived target refused, closed target only with the due-date trigger, due-date rules must end their own condition, day range, note length |
+| `TicketAutomationBackoff` | markers hold while fingerprint and time hold, lifted by a changed or deleted ticket or after a day, capped, encode/decode with junk ignored |
 | `TicketAutomationMatcher` | entry classification (customer, collaborator, agent reply, agent note, system entries, the opening message), matching on status, state, department, topic, assignment, bounces; first rule wins; the due-date SQL (sources, filters, limit, integers only); the note template |
 | `TicketAutomationRunner` against stand-in tickets | status change and note, bounce, agent reply and note ignored by default, collaborator only when on, opening message without and with flag, loop (entry created during a run, same rule twice, system note), chain of two rules, target disabled after saving, osTicket refusing the status, dry run, agent context restored, exception caught, due-date clear and unanswered, cron selection by rule and due-date source, a moved ticket not picked again |
 | Bootstrap | one rule per instance, HTML entities in the name decoded, signals connected once, the `DISABLED` kill switch (skipped where the plugin folder is read-only) |
@@ -41,6 +42,8 @@ How mail is simulated: `Ticket::postMessage()` with the sender's user ID, as the
 | Cron: due resubmission | Open with note, no mail; second cron run adds nothing |
 | Cron: not yet due, no due date, due in another status | nothing |
 | Cron with "clear due date" | due date and overdue flag gone |
+| Loop A1: stored rule "clear due date" + SLA fallback, five cron calls | no note, refusal logged once |
+| Loop A2: target Closed, osTicket refuses (help topic required), five cron calls | no note, one log line with the reason; after the ticket changes the next call closes it |
 | Admin save with a disabled target / closed target on a message trigger | refused with the reason, nothing stored |
 | Admin save of a valid rule | stored |
 | Target disabled after saving | nothing, warning in the system log |
