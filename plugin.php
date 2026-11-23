@@ -16,6 +16,6 @@ return array(
     'url'         => 'https://github.com/studio-prisma/osticket-plugin-ticket-automation',
     'description' => 'Rules that change tickets on events: a customer or collaborator message, '
                    . 'an agent reply or note, or a reached due date. Each plugin instance is one '
-                   . 'rule with trigger, conditions and actions. Every run leaves an internal note.',
+                   . 'rule with trigger, conditions and actions. Every run that acts on a ticket leaves an internal note.',
     'plugin'      => 'class.TicketAutomationPlugin.php:TicketAutomationPlugin',
 );

@@ -1,6 +1,6 @@
 # Ticket-Automation für osTicket
 
-Regeln, die Tickets umstellen, wenn etwas passiert: Ein Kunde antwortet, ein Mitleser schreibt, ein Agent antwortet oder schreibt eine Notiz, oder ein Fälligkeitsdatum ist erreicht. Jede Regel hat Auslöser, Bedingungen und Aktionen. Jede Ausführung hinterlässt eine interne Notiz im Ticket.
+Regeln, die Tickets umstellen, wenn etwas passiert: Ein Kunde antwortet, ein Mitleser schreibt, ein Agent antwortet oder schreibt eine Notiz, oder ein Fälligkeitsdatum ist erreicht. Jede Regel hat Auslöser, Bedingungen und Aktionen. Jede Ausführung, die am Ticket etwas tut, hinterlässt eine interne Notiz.
 
 Typischer Fall: Ein Ticket wartet auf den Kunden, der Kunde antwortet, das Ticket steht wieder auf „Offen“, ohne dass jemand es anfasst.
 
@@ -62,7 +62,7 @@ Alle müssen zutreffen. Leere Listen heißen „beliebig“.
 | Fälligkeitsdatum | Behalten, leeren oder auf jetzt plus 1 bis 365 Tage setzen |
 | Als unbeantwortet markieren | |
 | Agenten bei passiv zugeordneter Mail benachrichtigen | Schickt osTickets Benachrichtigung „Neue Nachricht“, wenn osTicket still geblieben ist, siehe unten. Nur Nachrichten von Kunde und Beteiligten |
-| Interne Notiz | Wird immer geschrieben. Vorlage mit Platzhaltern, siehe unten |
+| Interne Notiz | Bei jeder Ausführung, außer bei einem Fälligkeits-Lauf, der nichts ändert (siehe unten). Vorlage mit Platzhaltern |
 
 Es gibt keine Aktion, die dem Kunden mailt oder etwas löscht.
 
@@ -81,7 +81,9 @@ Ein geschlossenes Ticket lässt osTicket bei einer solchen Mail außerdem geschl
 | Normale Antwort | osTicket benachrichtigt | osTicket öffnet und benachrichtigt |
 | Passiv zugeordnet | in osTicket still, die Regel benachrichtigt | in osTicket still und geschlossen, die Regel öffnet und benachrichtigt |
 
-Mit dem Fälligkeits-Auslöser muss die Regel ihre eigene Bedingung beenden: ein Zielstatus, der nicht unter den aktuellen Status ist, oder das Fälligkeitsdatum leeren oder verschieben. Sonst griffe der nächste Cron-Lauf dasselbe Ticket wieder; eine solche Regel lässt sich nicht speichern.
+Mit dem Fälligkeits-Auslöser muss die Regel ihre eigene Bedingung beenden: ein Zielstatus, der nicht unter den aktuellen Status ist, oder das Fälligkeitsdatum leeren oder verschieben. Sonst griffe der nächste Cron-Lauf dasselbe Ticket wieder; eine solche Regel lässt sich nicht speichern. Das Fälligkeitsdatum zu leeren zählt nur, wenn „Due date to check“ auf der Ticket-Fälligkeit steht: mit SLA-Rückfall bleibt das SLA-Datum fällig.
+
+Ein Fälligkeits-Lauf, der nichts ändert, weil osTicket den Status verweigert (Schließen mit offenen Aufgaben, fehlenden Pflichtfeldern oder fehlendem Help-Topic) oder weil nichts mehr zu ändern war, schreibt keine Notiz. Er schreibt eine Warnung mit dem Grund ins Systemlog, und die Regel lässt das Ticket in Ruhe, bis sich das Ticket ändert (Status, Fälligkeiten, jede Aktualisierung oder jeder Verlaufseintrag) oder die Regel bearbeitet wird, längstens 24 Stunden. Eine Fälligkeits-Regel, die die Prüfungen zur Laufzeit ablehnen, wird einmal am Tag geloggt.
 
 ### Interne Notiz
 
@@ -134,6 +136,7 @@ Werden nicht automatisch angelegt. Statusnamen sind Beispiele.
 ## Sicherheit
 
 - **Keine Schleifen.** Während eine Regel läuft, werden alle Verlaufseinträge, die sie erzeugt, ignoriert. Die eigene Notiz ist ein Systemeintrag und löst nie aus. Eine Regel läuft pro Ticket und Request höchstens einmal, ein Request führt höchstens 200 Regeln aus.
+- **Keine Cron-Schleifen.** Ein Fälligkeits-Lauf, der nichts ändert, schreibt keine Notiz und wird für dasselbe Ticket erst wieder versucht, wenn sich Ticket oder Regel ändern, spätestens nach 24 Stunden. Zurückgehaltene Tickets zählen nicht gegen die 100 Tickets pro Regel und Lauf. Die Merker sind Zeilen in osTickets Config-Tabelle (Namespace `ticket-automation.backoff`) und werden entfernt, sobald sie nicht mehr gelten.
 - **Keine Ketten.** Ein Ereignis, eine Regel.
 - **Statuswechsel über osTicket.** `Ticket::setStatus()`, wie das Statusmenü. Regeln handeln als System, wie Auto-Cron: Keine Agentenrolle begrenzt den Wechsel, kein Agent wird schließender Agent.
 - **Deaktivierte Status werden abgelehnt**, beim Speichern der Regel und vor jedem Lauf noch einmal, falls der Status später deaktiviert wurde. Ein abgelehnter Lauf ändert nichts und schreibt eine Warnung ins System-Log.

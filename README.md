@@ -1,6 +1,6 @@
 # Ticket Automation for osTicket
 
-Rules that change tickets when something happens: a customer replies, a collaborator writes, an agent replies or adds a note, or a due date passes. Each rule has a trigger, conditions and actions. Every run leaves an internal note in the ticket.
+Rules that change tickets when something happens: a customer replies, a collaborator writes, an agent replies or adds a note, or a due date passes. Each rule has a trigger, conditions and actions. Every run that acts on the ticket leaves an internal note.
 
 Typical use: a ticket waits for the customer; the customer answers; the ticket goes back to "Open" without anyone touching it.
 
@@ -62,7 +62,7 @@ All must hold. Empty lists mean "any".
 | Due date | Keep, clear, or set to now plus 1 to 365 days |
 | Mark unanswered | |
 | Alert agents on passively matched mail | Sends osTicket's "New Message" alert when osTicket stayed silent, see below. Customer and collaborator messages only |
-| Internal note | Always written. Template with placeholders, see below |
+| Internal note | Written on every run, except a due-date run that changes nothing (see below). Template with placeholders |
 
 There are no actions that mail the customer or delete anything.
 
@@ -81,7 +81,9 @@ osTicket also leaves a closed ticket closed when such a mail arrives. To catch e
 | Ordinary reply | osTicket alerts | osTicket reopens and alerts |
 | Passively matched | silent in osTicket, the rule alerts | silent and closed in osTicket, the rule reopens and alerts |
 
-With the due-date trigger the rule has to end its own condition: a target status that isn't among the current statuses, or clearing or postponing the due date. Otherwise the next cron run would pick the same ticket again; such a rule can't be saved.
+With the due-date trigger the rule has to end its own condition: a target status that isn't among the current statuses, or clearing or postponing the due date. Otherwise the next cron run would pick the same ticket again; such a rule can't be saved. Clearing the due date only counts with "Due date to check" set to the ticket due date: with the SLA fallback the SLA due date stays due.
+
+A due-date run that changes nothing, because osTicket refuses the status (closing a ticket with open tasks, missing required fields or a missing help topic) or because nothing was left to change, writes no note. It logs a warning with the reason, and the rule leaves that ticket alone until the ticket changes (status, due dates, any update or thread entry) or the rule is edited, at the latest for 24 hours. A due-date rule the checks refuse at run time is logged once a day.
 
 ### Internal note
 
@@ -132,6 +134,7 @@ Not created automatically. Status names are examples; use yours.
 ## Safety
 
 - **No loops.** While a rule runs, every thread entry it causes is ignored. The rule's own note is a system entry, which never triggers. A rule runs at most once per ticket per request, and a request runs at most 200 rules.
+- **No cron loops.** A due-date run that changes nothing writes no note and is not tried again on the same ticket until the ticket or the rule changes, at the latest after 24 hours. Held-back tickets don't count against the 100 tickets per rule and run. The markers are rows in osTicket's config table (namespace `ticket-automation.backoff`) and are removed once they no longer apply.
 - **No chains.** One event, one rule.
 - **Status changes through osTicket.** `Ticket::setStatus()`, as the status menu does. Rules act as the system, like auto-cron: no agent's role limits the change, and no agent becomes closing agent.
 - **Disabled statuses are refused** when the rule is saved and again before every run, in case the status was disabled later. A refused run changes nothing and writes a warning to the system log.
