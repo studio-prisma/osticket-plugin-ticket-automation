@@ -18,17 +18,33 @@ declare(strict_types=1);
  *   cron                 include/class.cron.php (real cron) and
  *                        scp/autocron.php, both with no agent signed in.
  *
- * Loop protection, three layers:
+ * Loop protection, four layers:
  *   1. While a rule runs, every further thread entry is ignored ($running).
  *   2. System entries never trigger: the rule's own note is posted as SYSTEM,
  *      so it carries ThreadEntry::FLAG_SYSTEM (TicketAutomationMatcher::classify).
  *   3. A rule runs at most once per ticket per request, and a request runs at
  *      most MAX_RUNS rules in total.
+ *   4. Cron: a due-date run that changes nothing writes no note, logs once
+ *      and is not tried again until the ticket or the rule changes, at the
+ *      latest after a day (TicketAutomationBackoff). A due-date rule the
+ *      checks refuse is logged once a day, not on every cron call.
  */
 final class TicketAutomationRunner
 {
     public const NOTE_TITLE = 'Ticket Automation';
     public const MAX_RUNS = 200;
+
+    /** Rows in osTicket's config table: "rule.<id>.<signature>" and "refused.<id>". */
+    public const STORE_NAMESPACE = 'ticket-automation.backoff';
+
+    /**
+     * @var object|null  all(): array<string, string>, set(string $key, string $value): void
+     *                   ('' deletes); null = osTicket's config table. Replaceable in the unit tests.
+     */
+    public static $store = null;
+
+    /** @var callable(): int */
+    public static $clock = 'time';
 
     /** @var array<int, array> instance ID => normalised rule */
     private static $rules = array();
@@ -136,38 +152,163 @@ final class TicketAutomationRunner
             return;
         }
 
+        $statuses = TicketAutomationCatalog::statuses();
+        $now = (int) call_user_func(self::$clock);
+        $store = self::storeAll();
+        $keep = array();
+
         // Ticket ID => rule IDs whose due-date query selected it.
         $candidates = array();
+        $runnable = array();
+        $markers = array();
         foreach ($dueRules as $rule) {
-            $res = db_query(TicketAutomationMatcher::dueSql($rule, TICKET_TABLE, TICKET_STATUS_TABLE));
+            $rid = (int) $rule['id'];
+            // Checked here once instead of per ticket in apply(), so a broken
+            // rule costs one log line a day instead of one per ticket and call.
+            $errors = TicketAutomationRule::validate($rule, $statuses);
+            if ($errors) {
+                $keep['refused.' . $rid] = true;
+                self::refuseDueRule($rule, $errors, $store['refused.' . $rid] ?? null, $now);
+                continue;
+            }
+            $runnable[] = $rule;
+            $key = self::markerKey($rule);
+            $keep[$key] = true;
+            $stored = TicketAutomationBackoff::decode($store[$key] ?? null);
+            $markers[$rid] = array(
+                'key'    => $key,
+                'stored' => TicketAutomationBackoff::encode($stored),
+                'list'   => $stored ? TicketAutomationBackoff::prune($stored, self::fingerprints(array_keys($stored)), $now) : array(),
+            );
+            $res = db_query(TicketAutomationMatcher::dueSql($rule, TICKET_TABLE, TICKET_STATUS_TABLE, 100,
+                array_keys($markers[$rid]['list'])));
             while ($res && ($row = db_fetch_row($res))) {
-                $candidates[(int) $row[0]][(int) $rule['id']] = true;
+                $candidates[(int) $row[0]][$rid] = true;
             }
         }
 
+        // Rule ID => ticket IDs whose run changed nothing.
+        $unchanged = array();
         foreach ($candidates as $ticketId => $selectedBy) {
             $ticket = Ticket::lookup($ticketId);
             if (!$ticket) {
                 continue;
             }
             $facts = self::facts($ticket);
-            $eligible = array_values(array_filter($dueRules, static function ($r) use ($selectedBy) {
+            $eligible = array_values(array_filter($runnable, static function ($r) use ($selectedBy) {
                 return isset($selectedBy[(int) $r['id']]);
             }));
             $rule = TicketAutomationMatcher::pick($eligible, 'due', $facts);
-            if ($rule) {
-                self::apply($rule, $ticket, 'due', 'cron', $facts);
+            if ($rule && self::apply($rule, $ticket, 'due', 'cron', $facts) === 'unchanged') {
+                $unchanged[(int) $rule['id']][] = (int) $ticketId;
+            }
+        }
+
+        // Fingerprints after the runs: the ticket as it is now must change
+        // before the rule tries it again.
+        $fps = $unchanged ? self::fingerprints(array_merge(...array_values($unchanged))) : array();
+        foreach ($markers as $rid => $m) {
+            $list = $m['list'];
+            foreach ($unchanged[$rid] ?? array() as $tid) {
+                if (isset($fps[$tid])) {
+                    $list = TicketAutomationBackoff::mark($list, $tid, $fps[$tid], $now);
+                }
+            }
+            $encoded = TicketAutomationBackoff::encode($list);
+            if ($encoded !== $m['stored']) {
+                self::storeSet($m['key'], $encoded);
+            }
+        }
+
+        // Markers of rules that were edited, deleted or lost the due trigger.
+        foreach ($store as $key => $_) {
+            if (!isset($keep[$key])) {
+                self::storeSet((string) $key, '');
             }
         }
     }
 
+    /** Logs a refused due-date rule once a day while its errors stay the same. */
+    private static function refuseDueRule(array $rule, array $errors, ?string $stored, int $now): void
+    {
+        $fp = md5(implode(' ', $errors));
+        $last = $stored !== null ? json_decode($stored, true) : null;
+        if (is_array($last) && ($last['fp'] ?? '') === $fp && (int) ($last['until'] ?? 0) > $now) {
+            return;
+        }
+        self::log(sprintf('Rule "%s" refused for the due date: %s Logged once a day while the rule stays like this.',
+            $rule['name'], implode(' ', $errors)));
+        self::storeSet('refused.' . (int) $rule['id'], (string) json_encode(array(
+            'fp' => $fp, 'until' => $now + TicketAutomationBackoff::SECONDS)));
+    }
+
+    /** Store key of a rule's markers. Any change to the rule starts with no markers. */
+    private static function markerKey(array $rule): string
+    {
+        return 'rule.' . (int) $rule['id'] . '.' . substr(md5((string) json_encode($rule)), 0, 12);
+    }
+
+    /**
+     * @param int[] $ids
+     * @return array<int, string> ticket ID => fingerprint, deleted tickets missing
+     */
+    private static function fingerprints(array $ids): array
+    {
+        $ids = array_values(array_unique(array_map('intval', $ids)));
+        if (!$ids) {
+            return array();
+        }
+        $res = db_query(sprintf('SELECT ticket_id, status_id, duedate, est_duedate, updated, lastupdate FROM %s WHERE ticket_id IN (%s)',
+            TICKET_TABLE, implode(',', $ids)));
+        $out = array();
+        while ($res && ($row = db_fetch_array($res))) {
+            $out[(int) $row['ticket_id']] = TicketAutomationBackoff::fingerprint($row);
+        }
+        return $out;
+    }
+
+    /** @return array<string, string> */
+    private static function storeAll(): array
+    {
+        if (self::$store) {
+            return self::$store->all();
+        }
+        $res = db_query(sprintf('SELECT `key`, value FROM %s WHERE namespace=%s', CONFIG_TABLE, db_input(self::STORE_NAMESPACE)));
+        $out = array();
+        while ($res && ($row = db_fetch_row($res))) {
+            $out[(string) $row[0]] = (string) $row[1];
+        }
+        return $out;
+    }
+
+    /** Plain SQL instead of osTicket's Config: no "object.edited" signal, so no audit entry per marker. */
+    private static function storeSet(string $key, string $value): void
+    {
+        if (self::$store) {
+            self::$store->set($key, $value);
+            return;
+        }
+        if ($value === '') {
+            db_query(sprintf('DELETE FROM %s WHERE namespace=%s AND `key`=%s', CONFIG_TABLE,
+                db_input(self::STORE_NAMESPACE), db_input($key)));
+            return;
+        }
+        db_query(sprintf('INSERT INTO %s (namespace, `key`, value, updated) VALUES (%s, %s, %s, NOW())'
+            . ' ON DUPLICATE KEY UPDATE value=VALUES(value), updated=NOW()', CONFIG_TABLE,
+            db_input(self::STORE_NAMESPACE), db_input($key), db_input($value)));
+    }
+
     // --------------------------------------------------------------- apply
 
-    private static function apply(array $rule, Ticket $ticket, string $trigger, string $sender, array $facts, ?ThreadEntry $entry = null): void
+    /**
+     * @return string  'changed', 'unchanged' (ran, changed nothing; dry run),
+     *                 'refused' (checks failed) or 'skipped' (already ran, limit reached)
+     */
+    private static function apply(array $rule, Ticket $ticket, string $trigger, string $sender, array $facts, ?ThreadEntry $entry = null): string
     {
         $key = $ticket->getId() . ':' . $rule['id'];
         if (isset(self::$done[$key]) || count(self::$done) >= self::MAX_RUNS) {
-            return;
+            return 'skipped';
         }
         self::$done[$key] = true;
 
@@ -181,7 +322,7 @@ final class TicketAutomationRunner
         if ($errors) {
             self::log(sprintf('Rule "%s" refused on ticket #%s (%s): %s',
                 $rule['name'], $number, $label, implode(' ', $errors)));
-            return;
+            return 'refused';
         }
 
         $oldStatus = $statuses[(int) $facts['status_id']]['name'] ?? (string) $facts['status_id'];
@@ -194,7 +335,7 @@ final class TicketAutomationRunner
         if ($rule['dry_run']) {
             self::log(sprintf('Dry run: rule "%s" would run on ticket #%s (%s from %s): %s',
                 $rule['name'], $number, $label, $sender, implode('; ', self::plan($rule, $facts, $oldStatus, $newStatus, $passive))));
-            return;
+            return 'unchanged';
         }
 
         self::$running = true;
@@ -255,6 +396,22 @@ final class TicketAutomationRunner
                 }
             }
 
+            // No change, no note. A rule with no action but the note is the
+            // exception: the note is what it does. On cron a run that changed
+            // nothing would also find the same ticket on the next call; the
+            // caller holds the ticket back, the log says why.
+            if (!$done && !self::noteOnly($rule)) {
+                $notApplied = $failed ? ', not applied: ' . implode('; ', $failed) : '';
+                if ($trigger === 'due') {
+                    self::log(sprintf('Rule "%s" on ticket #%s (%s): nothing changed%s. Tried again when the ticket changes, '
+                        . 'at the latest in 24 hours.', $rule['name'], $number, $label, $notApplied));
+                } elseif ($failed) {
+                    self::log(sprintf('Rule "%s" on ticket #%s (%s from %s): nothing changed%s.',
+                        $rule['name'], $number, $label, $sender, $notApplied));
+                }
+                return 'unchanged';
+            }
+
             $changes = $done ? implode('; ', $done) . '.' : 'No change needed.';
             if ($failed) {
                 $changes .= ' Not applied: ' . implode('; ', $failed) . '.';
@@ -277,6 +434,7 @@ final class TicketAutomationRunner
             if ($failed) {
                 self::log(sprintf('Rule "%s" on ticket #%s: not applied: %s', $rule['name'], $number, implode('; ', $failed)));
             }
+            return 'changed';
         } finally {
             if ($hadStaff) {
                 $GLOBALS['thisstaff'] = $staff;
@@ -303,6 +461,13 @@ final class TicketAutomationRunner
             }
         }
         return false;
+    }
+
+    /** A rule whose only action is the internal note. */
+    private static function noteOnly(array $rule): bool
+    {
+        return (int) $rule['set_status'] <= 0 && (int) $rule['set_priority'] <= 0 && $rule['due_action'] === 'keep'
+            && !$rule['mark_unanswered'] && empty($rule['alert_passive']);
     }
 
     /** What a dry run reports. */

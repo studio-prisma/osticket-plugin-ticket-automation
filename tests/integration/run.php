@@ -300,6 +300,53 @@ cron();
 check('cron: due date cleared when the rule says so', statusOf($t['id']) === $S['open'] && col($t['id'], 'duedate') === null
     && (int) col($t['id'], 'isoverdue') === 0);
 
+// ------------------------------------------- cron idempotence (loop PoCs)
+// Five cron calls in a row. A run that changes nothing writes no note and
+// is not tried again until the ticket changes; before 0.3.1 every call
+// wrote one note, without end.
+
+// A1: "clear due date" with the SLA due date as fallback. The rule is
+// stored the way 0.3.0 allowed it; the form refuses it now.
+rules(array('SLA clear' => array('due_source' => 'manual_or_sla', 'act_due' => 'clear',
+    'act_status' => '') + $dueRule));
+$t = ticket($S['resubmission']);
+q(sprintf('UPDATE %s SET duedate=NULL, est_duedate=NOW() - INTERVAL 2 HOUR WHERE ticket_id=%d', TICKET_TABLE, $t['id']));
+$logsBefore = syslogCount('SLA clear');
+for ($i = 0; $i < 5; $i++) {
+    cron();
+}
+check('loop A1: clear due date + SLA fallback, five cron calls, no note', count(autoNotes($t['id'])) === 0,
+    count(autoNotes($t['id'])) . ' notes');
+check('loop A1: the refused rule is logged once, not on every call', syslogCount('SLA clear') - $logsBefore === 1,
+    (string) (syslogCount('SLA clear') - $logsBefore));
+
+// A2: target "Closed", but osTicket refuses to close (help topic required).
+$requireTopic = scalar(sprintf("SELECT value FROM %s WHERE namespace='core' AND `key`='require_topic_to_close'", CONFIG_TABLE));
+$setRequireTopic = static function (string $v): void {
+    q(sprintf("INSERT INTO %s (namespace, `key`, value, updated) VALUES ('core', 'require_topic_to_close', %s, NOW())"
+        . " ON DUPLICATE KEY UPDATE value=VALUES(value)", CONFIG_TABLE, db_input($v)));
+};
+$setRequireTopic('1');
+rules(array('Close due' => array('act_status' => sel(array($S['closed']))) + $dueRule));
+$t = ticket($S['resubmission'], array('due_hours' => -2));
+q(sprintf('UPDATE %s SET topic_id=0 WHERE ticket_id=%d', TICKET_TABLE, $t['id']));
+$logsBefore = syslogCount('Close due');
+for ($i = 0; $i < 5; $i++) {
+    cron();
+}
+check('loop A2: refused close, five cron calls, no note', count(autoNotes($t['id'])) === 0 && statusOf($t['id']) === $S['resubmission'],
+    count(autoNotes($t['id'])) . ' notes, status ' . statusOf($t['id']));
+check('loop A2: logged once, with osTicket\'s reason', syslogCount('Close due') - $logsBefore === 1
+    && syslogCount('Help Topic') >= 1, (string) (syslogCount('Close due') - $logsBefore));
+
+// The ticket changes: the rule tries again on the next call and closes it.
+$topic = (int) scalar(sprintf('SELECT topic_id FROM %s ORDER BY topic_id LIMIT 1', TOPIC_TABLE));
+q(sprintf('UPDATE %s SET topic_id=%d, updated=NOW() + INTERVAL 1 MINUTE WHERE ticket_id=%d', TICKET_TABLE, $topic, $t['id']));
+cron();
+check('loop A2: after the ticket changed, the next call runs the rule', $topic > 0 && statusOf($t['id']) === $S['closed']
+    && count(autoNotes($t['id'])) === 1, 'topic ' . $topic . ', status ' . statusOf($t['id']));
+$setRequireTopic((string) ($requireTopic ?? '0'));
+
 // --------------------------------------------------- disabled target status
 
 $ids = rules(array('Customer replied' => $replyRule));
@@ -372,8 +419,10 @@ step(array('action' => 'note', 'ticket' => $t['id'], 'staff' => $ADMIN));
 check('loop: agent note runs the rule once, its own note does not', count(autoNotes($t['id'])) === 1
     && entries($t['id']) === $before + 2 && (int) col($t['id'], 'isanswered') === 0, 'entries ' . entries($t['id']));
 step(array('action' => 'reply', 'ticket' => $t['id'], 'staff' => $ADMIN));
-check('loop: agent reply trigger when switched on, still no cascade', count(autoNotes($t['id'])) === 2
-    && entries($t['id']) === $before + 4);
+// The ticket is unanswered already: the rule has nothing to change, so
+// the reply gets no automation note.
+check('loop: agent reply with nothing to change, no note, no cascade', count(autoNotes($t['id'])) === 1
+    && entries($t['id']) === $before + 3, 'entries ' . entries($t['id']) . ', notes ' . count(autoNotes($t['id'])));
 
 // -------------------------------------------------------------- dry run
 

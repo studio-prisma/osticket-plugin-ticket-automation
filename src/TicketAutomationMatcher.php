@@ -101,8 +101,12 @@ final class TicketAutomationMatcher
      * SQL selecting the IDs of tickets a due-date rule considers, oldest due
      * date first. Only integers reach the statement. Status, department,
      * topic and assignment are checked again per ticket by matches().
+     * $exclude: ticket IDs held back by TicketAutomationBackoff, left out so
+     * they don't take the places of tickets that can still move.
+     *
+     * @param int[] $exclude
      */
-    public static function dueSql(array $rule, string $ticketTable, string $statusTable, int $limit = 100): string
+    public static function dueSql(array $rule, string $ticketTable, string $statusTable, int $limit = 100, array $exclude = array()): string
     {
         $ids = static function (array $list): string {
             return implode(',', array_map('intval', $list ?: array(0)));
@@ -124,6 +128,9 @@ final class TicketAutomationMatcher
         }
         if ($rule['only_assigned']) {
             $sql .= " AND (t.staff_id > 0 OR t.team_id > 0)";
+        }
+        if ($exclude) {
+            $sql .= " AND t.ticket_id NOT IN (" . $ids($exclude) . ")";
         }
         return $sql . " ORDER BY COALESCE(t.duedate, t.est_duedate), t.ticket_id LIMIT " . max(1, min(500, $limit));
     }

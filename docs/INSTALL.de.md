@@ -74,8 +74,8 @@ Dann Dry run ausschalten und den ersten Fall wiederholen:
 
 | Prüfung | Erwartet |
 |---|---|
-| Kunde antwortet zweimal hintereinander | Ein Statuswechsel, eine Notiz pro Nachricht, keine wachsende Kette von Notizen |
-| Agent schreibt eine interne Notiz auf ein Ticket, das eine Notiz-Regel beobachtet | Genau eine Automations-Notiz pro Agenten-Notiz |
+| Kunde antwortet zweimal hintereinander | Ein Statuswechsel, eine Notiz; die zweite Nachricht findet nichts zu ändern und erzeugt keine Notiz |
+| Agent schreibt eine interne Notiz auf ein Ticket, das eine Notiz-Regel beobachtet | Höchstens eine Automations-Notiz pro Agenten-Notiz, keine, wenn die Regel nichts zu ändern hatte |
 | Zielstatus in der Statusliste deaktivieren, dann Regel auslösen | Ticket unverändert; Warnung im System-Log „refused ... disabled in the status list“ |
 | `DISABLED` im Plugin-Ordner anlegen, Regel auslösen | Ticket unverändert, kein Log-Eintrag. Datei danach löschen |
 | Postfach des Testkunden | Keine Mail vom Plugin. Mails, die osTicket selbst verschickt (Auto-Antworten, Mitleser-Hinweise), ändert das Plugin nicht |

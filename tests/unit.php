@@ -64,6 +64,18 @@ function db_query($sql)
         $ids = $GLOBALS['fake_due'] ? ($GLOBALS['fake_due'])($sql) : array();
         return new FakeResult(array_map(fn($id) => array('ticket_id' => $id), $ids));
     }
+    if (preg_match('/^SELECT ticket_id, status_id, duedate, est_duedate, updated, lastupdate FROM ' . TICKET_TABLE
+        . ' WHERE ticket_id IN \(([\d,]+)\)$/', $sql, $m)) {
+        $rows = array();
+        foreach (explode(',', $m[1]) as $id) {
+            $t = Ticket::$all[(int) $id] ?? null;
+            if ($t) {
+                $rows[] = array('ticket_id' => $t->id, 'status_id' => $t->status, 'duedate' => $t->duedate,
+                    'est_duedate' => $t->est, 'updated' => $t->updated, 'lastupdate' => null);
+            }
+        }
+        return new FakeResult($rows);
+    }
     if (strpos($sql, 'SELECT COUNT(*) FROM ' . THREAD_ENTRY_TABLE) === 0) {
         return new FakeResult(array(array('n' => $GLOBALS['fake_prior'])));
     }
@@ -121,7 +133,7 @@ class Ticket
 {
     public static $all = array();
     public $id, $status, $user = 10, $dept = 1, $topic = 2, $assigned = true, $answered = true;
-    public $duedate = null, $isoverdue = 0;
+    public $duedate = null, $isoverdue = 0, $est = null, $updated = '2026-11-01 08:00:00';
     public $notes = array(), $statusCalls = 0, $failStatus = false, $throwOnStatus = false;
     /** Simulates osTicket posting the plugin's note: a nested signal. */
     public $nestedEntry = null;
@@ -173,8 +185,29 @@ final class FakeOst
 }
 $GLOBALS['ost'] = new FakeOst();
 
+/** Stand-in for the plugin's rows in osTicket's config table. */
+final class FakeStore
+{
+    public $rows = array();
+    public $writes = 0;
+    function all(): array { return $this->rows; }
+    function set(string $k, string $v): void
+    {
+        $this->writes++;
+        if ($v === '') {
+            unset($this->rows[$k]);
+        } else {
+            $this->rows[$k] = $v;
+        }
+    }
+}
+$GLOBALS['fake_store'] = new FakeStore();
+$GLOBALS['fake_now'] = strtotime('2026-11-01 12:00:00');
+
 $dir = getenv('PLUGIN_DIR') ?: dirname(__DIR__);
 require $dir . '/class.TicketAutomationPlugin.php';
+TicketAutomationRunner::$store = $GLOBALS['fake_store'];
+TicketAutomationRunner::$clock = fn() => $GLOBALS['fake_now'];
 
 // ------------------------------------------------------------------ harness
 
@@ -220,8 +253,15 @@ function rule(array $raw, int $id = 1, string $name = 'Rule'): array
     return TicketAutomationRule::normalise($raw, $id, $name);
 }
 
-function resetRunner(array $rules): void
+/** A new request. $keep: tickets and stored markers survive, as between two cron calls. */
+function resetRunner(array $rules, bool $keep = false): void
 {
+    $tickets = Ticket::$all;
+    if (!$keep) {
+        $GLOBALS['fake_store']->rows = array();
+        $GLOBALS['fake_store']->writes = 0;
+        $GLOBALS['fake_now'] = strtotime('2026-11-01 12:00:00');
+    }
     $r = new ReflectionClass('TicketAutomationRunner');
     foreach (array('rules' => array(), 'done' => array(), 'running' => false) as $prop => $val) {
         $p = $r->getProperty($prop);
@@ -231,9 +271,21 @@ function resetRunner(array $rules): void
     foreach ($rules as $rule) {
         TicketAutomationRunner::register($rule);
     }
-    Ticket::$all = array();
-    $GLOBALS['ost']->logs = array();
-    $GLOBALS['fake_due'] = null;
+    Ticket::$all = $keep ? $tickets : array();
+    if (!$keep) {
+        $GLOBALS['ost']->logs = array();
+        $GLOBALS['fake_due'] = null;
+    }
+}
+
+/** Due-date query stand-in: these tickets, minus the ones the SQL excludes. */
+function dueIds(array $ids): callable
+{
+    return function (string $sql) use ($ids) {
+        $m = array();
+        $out = preg_match('/NOT IN \(([\d,]+)\)/', $sql, $m) ? array_map('intval', explode(',', $m[1])) : array();
+        return array_values(array_filter($ids, fn($id) => !in_array($id, $out, true)));
+    };
 }
 
 function msg(int $ticket, array $extra = array()): ThreadEntry
@@ -440,8 +492,9 @@ resetRunner(array($wkRule));
 $t = new Ticket(8, 6);
 $t->failStatus = true;
 TicketAutomationRunner::onThreadEntry(msg(8));
-check('failed status change: noted in the ticket and logged', $t->status === 6 && count($t->notes) === 1
-    && strpos($t->notes[0]['text'], 'Not applied: status (cannot)') !== false && count($GLOBALS['ost']->logs) === 1);
+$logs = $GLOBALS['ost']->logs;
+check('failed status change, nothing else to do: no note, logged with the reason', $t->status === 6 && !$t->notes
+    && count($logs) === 1 && strpos($logs[0][1], 'nothing changed, not applied: status (cannot)') !== false, json_encode($logs));
 
 resetRunner(array(rule($base + array('dry_run' => true), 1, 'Dry')));
 $t = new Ticket(9, 6);
@@ -509,6 +562,155 @@ check('cron: a ticket that moved on is not selected again', (function () use ($w
     $GLOBALS['fake_due'] = fn() => array(31);
     TicketAutomationRunner::onCron();
     return $first === 1 && $t->status === 1 && count($t->notes) === 1;
+})());
+
+// ------------------------------------------------- cron idempotence (A1, A2)
+
+// A1: clearing the due date ends nothing when the SLA due date counts too.
+$slaClear = array('cond_status' => array(12 => 'x'), 'trig_user' => false, 'trig_due' => true,
+    'due_source' => 'manual_or_sla', 'act_due' => 'clear');
+check('A1 validate: clear due date + SLA fallback refused, with the reason', strpos($v($slaClear)['trig_due'] ?? '', 'SLA') !== false,
+    json_encode($v($slaClear)));
+check('A1 validate: clear + SLA fallback valid with a status leaving the condition', $v($slaClear + array('act_status' => '1')) === array());
+check('A1 validate: postpone + SLA fallback valid', $v(array('act_due' => 'set', 'act_due_days' => '2') + $slaClear) === array());
+check('A1 validate: clear with the ticket due date only stays valid', $v(array('due_source' => 'manual') + $slaClear) === array());
+
+check('due SQL: held-back tickets excluded, integers only', strpos(TicketAutomationMatcher::dueSql($wv1, 't', 's', 100, array(5, '7x', 9)),
+    'AND t.ticket_id NOT IN (5,7,9)') !== false && strpos(TicketAutomationMatcher::dueSql($wv1, 't', 's'), 'NOT IN') === false);
+
+// Backoff markers, pure.
+$now = 1000000;
+$mk = TicketAutomationBackoff::mark(array(), 4, 'fp4', $now);
+check('backoff: marker holds while fingerprint and time hold', TicketAutomationBackoff::prune($mk, array(4 => 'fp4'), $now + 10) === $mk);
+check('backoff: changed ticket, expired time or deleted ticket lift the marker',
+    TicketAutomationBackoff::prune($mk, array(4 => 'other'), $now) === array()
+    && TicketAutomationBackoff::prune($mk, array(4 => 'fp4'), $now + TicketAutomationBackoff::SECONDS) === array()
+    && TicketAutomationBackoff::prune($mk, array(), $now) === array());
+check('backoff: capped, the markers running out first go', (function () use ($now) {
+    $m = array();
+    for ($i = 1; $i <= TicketAutomationBackoff::MAX + 5; $i++) {
+        $m = TicketAutomationBackoff::mark($m, $i, 'f', $now + $i);
+    }
+    return count($m) === TicketAutomationBackoff::MAX && !isset($m[1]) && isset($m[TicketAutomationBackoff::MAX + 5]);
+})());
+check('backoff: encode/decode round trip, junk ignored', TicketAutomationBackoff::decode(TicketAutomationBackoff::encode($mk)) === $mk
+    && TicketAutomationBackoff::decode('{"x":1,"0":{"fp":"a","until":1},"3":"no"}') === array()
+    && TicketAutomationBackoff::decode(null) === array() && TicketAutomationBackoff::encode(array()) === '');
+
+/** Five cron calls, each a request of its own. */
+function cronCalls(array $rules, int $n = 5): void
+{
+    for ($i = 0; $i < $n; $i++) {
+        resetRunner($rules, true);
+        TicketAutomationRunner::onCron();
+    }
+}
+
+// A2: target Closed, osTicket refuses. Before 0.3.1: one note per call.
+$closeRule = rule(array('cond_status' => array(12 => 'x'), 'trig_user' => false, 'trig_due' => true, 'act_status' => '3'), 1, 'Close due');
+resetRunner(array($closeRule));
+$t = new Ticket(40, 12);
+$t->failStatus = true;
+$GLOBALS['fake_due'] = dueIds(array(40));
+cronCalls(array($closeRule));
+$logs = $GLOBALS['ost']->logs;
+check('A2: refused close, five cron calls, no note', !$t->notes && $t->status === 12, count($t->notes) . ' notes');
+check('A2: tried once, logged once with the reason', $t->statusCalls === 1 && count($logs) === 1
+    && strpos($logs[0][1], 'nothing changed, not applied: status (cannot)') !== false, json_encode($logs));
+check('A2: one marker written, not one per call', $GLOBALS['fake_store']->writes === 1, (string) $GLOBALS['fake_store']->writes);
+
+$t->updated = '2026-11-01 12:30:00';
+cronCalls(array($closeRule), 2);
+check('A2: ticket changed, tried again once', $t->statusCalls === 2 && count($GLOBALS['ost']->logs) === 2 && !$t->notes);
+
+$GLOBALS['fake_now'] += TicketAutomationBackoff::SECONDS;
+$t->failStatus = false;
+cronCalls(array($closeRule), 2);
+check('A2: after a day tried again without a change, and closed', $t->statusCalls === 3 && $t->status === 3
+    && count($t->notes) === 1 && strpos($t->notes[0]['text'], 'Status: Resubmission -> Closed') !== false);
+
+// A held-back ticket does not take a place in the query.
+resetRunner(array($closeRule));
+$stuck = new Ticket(41, 12);
+$stuck->failStatus = true;
+$GLOBALS['fake_due'] = dueIds(array(41));
+cronCalls(array($closeRule), 1);
+$GLOBALS['fake_sql'] = array();
+cronCalls(array($closeRule), 1);
+check('A2: held-back ticket excluded from the next query', (bool) preg_grep('/NOT IN \(41\)/', $GLOBALS['fake_sql']));
+
+// A partial run (status refused, due date cleared) still changed
+// something: note as before, no marker.
+$closeClear = rule(array('cond_status' => array(12 => 'x'), 'trig_user' => false, 'trig_due' => true, 'act_status' => '3',
+    'act_due' => 'clear'), 1, 'Close and clear');
+resetRunner(array($closeClear));
+$t = new Ticket(42, 12);
+$t->failStatus = true;
+$t->duedate = '2026-10-30 10:00:00';
+$GLOBALS['fake_due'] = dueIds(array(42));
+cronCalls(array($closeClear), 1);
+check('partial run: note with what changed and what not, no marker', count($t->notes) === 1
+    && strpos($t->notes[0]['text'], 'Due date cleared. Not applied: status (cannot).') !== false && !$GLOBALS['fake_store']->rows,
+    json_encode($t->notes));
+
+// A1 at run time: a rule saved under 0.3.0 with clear + SLA fallback.
+$legacy = rule($slaClear, 1, 'SLA clear');
+resetRunner(array($legacy));
+$t = new Ticket(43, 12);
+$t->est = '2026-10-31 10:00:00';
+$GLOBALS['fake_due'] = dueIds(array(43));
+$GLOBALS['fake_sql'] = array();
+cronCalls(array($legacy));
+$logs = $GLOBALS['ost']->logs;
+check('A1: stored legacy rule, five cron calls, no note, no ticket query', !$t->notes
+    && !preg_grep('/^SELECT t\.ticket_id/', $GLOBALS['fake_sql']), count($t->notes) . ' notes');
+check('A1: refused rule logged once, not per call or ticket', count($logs) === 1 && strpos($logs[0][1], 'refused for the due date') !== false,
+    json_encode($logs));
+$GLOBALS['fake_now'] += TicketAutomationBackoff::SECONDS;
+cronCalls(array($legacy), 1);
+check('A1: logged again after a day', count($GLOBALS['ost']->logs) === 2);
+
+// Dry run on cron: logged once, and switching it off runs at once.
+$dry = rule(array('cond_status' => array(12 => 'x'), 'trig_user' => false, 'trig_due' => true, 'act_status' => '1', 'dry_run' => true), 1, 'Dry due');
+resetRunner(array($dry));
+$t = new Ticket(44, 12);
+$GLOBALS['fake_due'] = dueIds(array(44));
+cronCalls(array($dry), 3);
+check('dry run on cron: plan logged once, not on every call', count($GLOBALS['ost']->logs) === 1 && $t->status === 12);
+$live = rule(array('cond_status' => array(12 => 'x'), 'trig_user' => false, 'trig_due' => true, 'act_status' => '1'), 1, 'Dry due');
+cronCalls(array($live), 1);
+check('dry run on cron: rule changed, markers dropped, runs at once', $t->status === 1 && count($t->notes) === 1
+    && $GLOBALS['fake_store']->rows === array(), json_encode($GLOBALS['fake_store']->rows));
+
+// Markers of a rule that is gone are removed.
+resetRunner(array($closeRule));
+$GLOBALS['fake_store']->rows = array('rule.9.abc' => '{"5":{"fp":"x","until":1}}', 'refused.9' => '{"fp":"y","until":1}');
+$GLOBALS['fake_due'] = dueIds(array());
+cronCalls(array($closeRule), 1);
+check('store: markers of deleted or edited rules removed', $GLOBALS['fake_store']->rows === array());
+
+// Message triggers: no change, no note either; no backoff outside cron.
+check('message trigger: nothing left to change, no note, no log', (function () {
+    $r = rule(array('cond_status' => array(6 => 'x'), 'act_unanswered' => true), 1, 'Unanswered');
+    resetRunner(array($r));
+    $t = new Ticket(45, 6);
+    $t->answered = false;
+    TicketAutomationRunner::onThreadEntry(msg(45));
+    return !$t->notes && !$GLOBALS['ost']->logs && !$GLOBALS['fake_store']->writes;
+})());
+check('message trigger: partial change still noted with what failed', (function () {
+    $r = rule(array('cond_status' => array(6 => 'x'), 'act_status' => '1', 'act_unanswered' => true), 1, 'Partial');
+    resetRunner(array($r));
+    $t = new Ticket(46, 6);
+    $t->failStatus = true;
+    TicketAutomationRunner::onThreadEntry(msg(46));
+    return count($t->notes) === 1 && strpos($t->notes[0]['text'], 'Marked unanswered. Not applied: status (cannot).') !== false;
+})());
+check('message trigger: a rule whose only action is the note still writes it', (function () {
+    resetRunner(array(rule(array('cond_status' => array(6 => 'x'), 'act_note' => 'Seen: {changes}'), 1, 'Note only')));
+    $t = new Ticket(47, 6);
+    TicketAutomationRunner::onThreadEntry(msg(47));
+    return count($t->notes) === 1 && $t->notes[0]['text'] === 'Seen: No change needed.';
 })());
 
 // ------------------------------------------------------- bootstrap wiring

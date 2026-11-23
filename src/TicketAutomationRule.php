@@ -174,9 +174,13 @@ final class TicketAutomationRule
         }
 
         if (!empty($rule['triggers']['due']) && !self::dueMakesProgress($rule)) {
-            $errors['trig_due'] = 'With the due-date trigger the rule must move the ticket out of the condition: '
-                . 'set a status that is not among the current statuses, or clear or postpone the due date. '
-                . 'Otherwise it would run again on every cron call.';
+            $errors['trig_due'] = $rule['due_action'] === 'clear' && $rule['due_source'] === 'manual_or_sla'
+                ? 'Clearing the due date does not end the condition when the SLA due date is checked too: '
+                    . 'the SLA due date stays due. Also set a status that is not among the current statuses, '
+                    . 'postpone the due date instead, or check the ticket due date only.'
+                : 'With the due-date trigger the rule must move the ticket out of the condition: '
+                    . 'set a status that is not among the current statuses, or clear or postpone the due date. '
+                    . 'Otherwise it would run again on every cron call.';
         }
 
         if ($rule['alert_passive'] && empty($rule['triggers']['user_message']) && empty($rule['triggers']['collab_message'])) {
@@ -194,6 +198,11 @@ final class TicketAutomationRule
     /**
      * Whether one run on a due ticket ends the condition that selected it,
      * so the next cron call does not pick the same ticket again.
+     *
+     * Clearing the due date is no progress when the SLA due date counts too:
+     * with no ticket due date the query falls back to the SLA due date, which
+     * is still due. Postponing works with both sources, because a ticket due
+     * date in the future hides the SLA due date.
      */
     public static function dueMakesProgress(array $rule): bool
     {
@@ -201,7 +210,10 @@ final class TicketAutomationRule
         if ($target > 0 && !in_array($target, $rule['statuses'], true)) {
             return true;
         }
-        return in_array($rule['due_action'], array('clear', 'set'), true);
+        if ($rule['due_action'] === 'set') {
+            return true;
+        }
+        return $rule['due_action'] === 'clear' && $rule['due_source'] !== 'manual_or_sla';
     }
 
     public static function hasMessageTrigger(array $rule): bool

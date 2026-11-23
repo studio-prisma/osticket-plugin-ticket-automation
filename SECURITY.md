@@ -26,7 +26,7 @@ Expected response: an acknowledgement within 7 days, an assessment within 30. Th
 - **Anyone but an admin creating or changing a rule**, or a rule being changed without a valid CSRF token.
 - **A rule running on an event it isn't configured for**, e.g. a collaborator message on a rule with that trigger off, the opening message of a new ticket, a bounce or auto-reply with the ignore setting on, or the plugin's own note.
 - **A rule setting a status the checks refuse:** disabled, deleted, archived, or closed from a message trigger.
-- **A loop or chain:** one event running more than one rule, or a rule running more than once per ticket per request.
+- **A loop or chain:** one event running more than one rule, a rule running more than once per ticket per request, or a due-date rule writing to a ticket on every cron call without changing it.
 - **Mail to a customer** caused by the plugin itself, or an alert from the plugin's note.
 - **Markup or script from a sender name, ticket data or the note template** rendered as HTML in the ticket view.
 - **SQL injection** through rule settings into the due-date query, or through mail headers (In-Reply-To, References) into the passive-match lookup.

@@ -142,7 +142,8 @@ class TicketAutomationConfig extends PluginConfig
 
             'sec_act' => new SectionBreakField(array(
                 'label' => 'Actions',
-                'hint'  => 'Every run writes an internal note. No mail goes to the customer.',
+                'hint'  => 'A run that changes the ticket writes an internal note; a run that changes nothing writes none, '
+                         . 'unless the note is the rule\'s only action. No mail goes to the customer.',
             )),
 
             'act_status' => new ChoiceField(array(

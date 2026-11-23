@@ -74,8 +74,8 @@ Then switch Dry run off and repeat the first case:
 
 | Check | Expected |
 |---|---|
-| A customer replies twice in a row | One status change, one note per message, no growing chain of notes |
-| An agent writes an internal note on a ticket a note-triggered rule watches | Exactly one automation note per agent note |
+| A customer replies twice in a row | One status change, one note; the second message finds nothing to change and adds no note |
+| An agent writes an internal note on a ticket a note-triggered rule watches | At most one automation note per agent note, none if the rule had nothing to change |
 | Disable the target status in the status list, then trigger the rule | Ticket unchanged; system log warning "refused ... disabled in the status list" |
 | Create `DISABLED` in the plugin folder, trigger the rule | Ticket unchanged, no log entry. Delete the file afterwards |
 | Mailbox of the test customer | No mail from the plugin. Mails osTicket sends on its own (auto-responses, collaborator notices) are unchanged by the plugin |

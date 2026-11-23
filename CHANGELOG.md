@@ -4,6 +4,18 @@ All notable changes to this project are documented here. Format: [Keep a Changel
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-23
+
+### Changed
+
+- A run that changes nothing writes no internal note, for every trigger, not only the due date. Before, a message on a ticket the actions had nothing left to do for still got a "No change needed." note. If osTicket refused an action, the reason goes to the system log instead. A rule whose only action is the note still writes it on every run; a partial run still writes its note and lists what was not applied.
+
+### Fixed
+
+- Due-date rules no longer loop. A cron run that changes nothing, because osTicket refuses the target status (closing with open tasks, missing required fields or help topic) or nothing was left to change, writes no internal note: it logs one warning with the reason and leaves that ticket alone for that rule until the ticket or the rule changes, at the latest for 24 hours. Before, every cron call wrote the same note again, thousands a day with auto-cron. Held-back tickets no longer take places among the 100 tickets per rule and run.
+- "Clear the due date" together with "Due date, or the SLA due date if none is set" is refused on save: after clearing, the SLA due date is still due and the rule ran again on every cron call. Such a rule needs a target status outside the condition, or "postpone" instead. Rules already stored that way stop running and are logged once a day until fixed.
+- A due-date rule in dry run logs its plan once per ticket and day instead of on every cron call.
+
 ## [0.3.0] - 2026-11-18
 
 ### Added
@@ -39,7 +51,8 @@ All notable changes to this project are documented here. Format: [Keep a Changel
 - Kill switch: a `DISABLED` file in the plugin folder stops every rule.
 - Unit tests without osTicket; integration suite against osTicket 1.18.4 in Docker, including mail piped through `api/pipe.php` and `api/cron.php`.
 
-[Unreleased]: https://github.com/studio-prisma/osticket-plugin-ticket-automation/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/studio-prisma/osticket-plugin-ticket-automation/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/studio-prisma/osticket-plugin-ticket-automation/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/studio-prisma/osticket-plugin-ticket-automation/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/studio-prisma/osticket-plugin-ticket-automation/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/studio-prisma/osticket-plugin-ticket-automation/releases/tag/v0.1.0
