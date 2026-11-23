@@ -4,6 +4,10 @@ All notable changes to this project are documented here. Format: [Keep a Changel
 
 ## [Unreleased]
 
+### Changed
+
+- A run that changes nothing writes no internal note, for every trigger, not only the due date. Before, a message on a ticket the actions had nothing left to do for still got a "No change needed." note. If osTicket refused an action, the reason goes to the system log instead. A rule whose only action is the note still writes it on every run; a partial run still writes its note and lists what was not applied.
+
 ### Fixed
 
 - Due-date rules no longer loop. A cron run that changes nothing, because osTicket refuses the target status (closing with open tasks, missing required fields or help topic) or nothing was left to change, writes no internal note: it logs one warning with the reason and leaves that ticket alone for that rule until the ticket or the rule changes, at the latest for 24 hours. Before, every cron call wrote the same note again, thousands a day with auto-cron. Held-back tickets no longer take places among the 100 tickets per rule and run.

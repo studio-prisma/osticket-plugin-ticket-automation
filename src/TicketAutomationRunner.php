@@ -396,13 +396,19 @@ final class TicketAutomationRunner
                 }
             }
 
-            // Cron: a run that changed nothing would find the same ticket on
-            // the next call and write the same note again, without end. It
-            // writes no note; the caller holds the ticket back.
-            if ($trigger === 'due' && !$done) {
-                self::log(sprintf('Rule "%s" on ticket #%s (%s): nothing changed%s. Tried again when the ticket changes, '
-                    . 'at the latest in 24 hours.', $rule['name'], $number, $label,
-                    $failed ? ', not applied: ' . implode('; ', $failed) : ''));
+            // No change, no note. A rule with no action but the note is the
+            // exception: the note is what it does. On cron a run that changed
+            // nothing would also find the same ticket on the next call; the
+            // caller holds the ticket back, the log says why.
+            if (!$done && !self::noteOnly($rule)) {
+                $notApplied = $failed ? ', not applied: ' . implode('; ', $failed) : '';
+                if ($trigger === 'due') {
+                    self::log(sprintf('Rule "%s" on ticket #%s (%s): nothing changed%s. Tried again when the ticket changes, '
+                        . 'at the latest in 24 hours.', $rule['name'], $number, $label, $notApplied));
+                } elseif ($failed) {
+                    self::log(sprintf('Rule "%s" on ticket #%s (%s from %s): nothing changed%s.',
+                        $rule['name'], $number, $label, $sender, $notApplied));
+                }
                 return 'unchanged';
             }
 
@@ -455,6 +461,13 @@ final class TicketAutomationRunner
             }
         }
         return false;
+    }
+
+    /** A rule whose only action is the internal note. */
+    private static function noteOnly(array $rule): bool
+    {
+        return (int) $rule['set_status'] <= 0 && (int) $rule['set_priority'] <= 0 && $rule['due_action'] === 'keep'
+            && !$rule['mark_unanswered'] && empty($rule['alert_passive']);
     }
 
     /** What a dry run reports. */

@@ -1,6 +1,6 @@
 # Ticket Automation for osTicket
 
-Rules that change tickets when something happens: a customer replies, a collaborator writes, an agent replies or adds a note, or a due date passes. Each rule has a trigger, conditions and actions. Every run that acts on the ticket leaves an internal note.
+Rules that change tickets when something happens: a customer replies, a collaborator writes, an agent replies or adds a note, or a due date passes. Each rule has a trigger, conditions and actions. Every run that changes the ticket leaves an internal note.
 
 Typical use: a ticket waits for the customer; the customer answers; the ticket goes back to "Open" without anyone touching it.
 
@@ -62,7 +62,7 @@ All must hold. Empty lists mean "any".
 | Due date | Keep, clear, or set to now plus 1 to 365 days |
 | Mark unanswered | |
 | Alert agents on passively matched mail | Sends osTicket's "New Message" alert when osTicket stayed silent, see below. Customer and collaborator messages only |
-| Internal note | Written on every run, except a due-date run that changes nothing (see below). Template with placeholders |
+| Internal note | Written when the run changed something. A rule whose only action is the note always writes it. Template with placeholders |
 
 There are no actions that mail the customer or delete anything.
 
@@ -83,7 +83,9 @@ osTicket also leaves a closed ticket closed when such a mail arrives. To catch e
 
 With the due-date trigger the rule has to end its own condition: a target status that isn't among the current statuses, or clearing or postponing the due date. Otherwise the next cron run would pick the same ticket again; such a rule can't be saved. Clearing the due date only counts with "Due date to check" set to the ticket due date: with the SLA fallback the SLA due date stays due.
 
-A due-date run that changes nothing, because osTicket refuses the status (closing a ticket with open tasks, missing required fields or a missing help topic) or because nothing was left to change, writes no note. It logs a warning with the reason, and the rule leaves that ticket alone until the ticket changes (status, due dates, any update or thread entry) or the rule is edited, at the latest for 24 hours. A due-date rule the checks refuse at run time is logged once a day.
+A run that changes nothing writes no note, whatever the trigger: the actions found nothing left to do, or osTicket refused them. If osTicket refused an action, the system log says why. A partial run (one action applied, another refused) writes its note as before, listing both.
+
+A due-date run that changes nothing, because osTicket refuses the status (closing a ticket with open tasks, missing required fields or a missing help topic) or because nothing was left to change, also logs a warning with the reason, and the rule leaves that ticket alone until the ticket changes (status, due dates, any update or thread entry) or the rule is edited, at the latest for 24 hours. A due-date rule the checks refuse at run time is logged once a day.
 
 ### Internal note
 

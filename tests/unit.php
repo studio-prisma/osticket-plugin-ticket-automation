@@ -492,8 +492,9 @@ resetRunner(array($wkRule));
 $t = new Ticket(8, 6);
 $t->failStatus = true;
 TicketAutomationRunner::onThreadEntry(msg(8));
-check('failed status change: noted in the ticket and logged', $t->status === 6 && count($t->notes) === 1
-    && strpos($t->notes[0]['text'], 'Not applied: status (cannot)') !== false && count($GLOBALS['ost']->logs) === 1);
+$logs = $GLOBALS['ost']->logs;
+check('failed status change, nothing else to do: no note, logged with the reason', $t->status === 6 && !$t->notes
+    && count($logs) === 1 && strpos($logs[0][1], 'nothing changed, not applied: status (cannot)') !== false, json_encode($logs));
 
 resetRunner(array(rule($base + array('dry_run' => true), 1, 'Dry')));
 $t = new Ticket(9, 6);
@@ -688,13 +689,28 @@ $GLOBALS['fake_due'] = dueIds(array());
 cronCalls(array($closeRule), 1);
 check('store: markers of deleted or edited rules removed', $GLOBALS['fake_store']->rows === array());
 
-// Message triggers keep their behaviour: every run leaves a note.
-check('message trigger: failed status still noted (no backoff outside cron)', (function () use ($wkRule) {
-    resetRunner(array($wkRule));
+// Message triggers: no change, no note either; no backoff outside cron.
+check('message trigger: nothing left to change, no note, no log', (function () {
+    $r = rule(array('cond_status' => array(6 => 'x'), 'act_unanswered' => true), 1, 'Unanswered');
+    resetRunner(array($r));
     $t = new Ticket(45, 6);
-    $t->failStatus = true;
+    $t->answered = false;
     TicketAutomationRunner::onThreadEntry(msg(45));
-    return count($t->notes) === 1 && !$GLOBALS['fake_store']->writes;
+    return !$t->notes && !$GLOBALS['ost']->logs && !$GLOBALS['fake_store']->writes;
+})());
+check('message trigger: partial change still noted with what failed', (function () {
+    $r = rule(array('cond_status' => array(6 => 'x'), 'act_status' => '1', 'act_unanswered' => true), 1, 'Partial');
+    resetRunner(array($r));
+    $t = new Ticket(46, 6);
+    $t->failStatus = true;
+    TicketAutomationRunner::onThreadEntry(msg(46));
+    return count($t->notes) === 1 && strpos($t->notes[0]['text'], 'Marked unanswered. Not applied: status (cannot).') !== false;
+})());
+check('message trigger: a rule whose only action is the note still writes it', (function () {
+    resetRunner(array(rule(array('cond_status' => array(6 => 'x'), 'act_note' => 'Seen: {changes}'), 1, 'Note only')));
+    $t = new Ticket(47, 6);
+    TicketAutomationRunner::onThreadEntry(msg(47));
+    return count($t->notes) === 1 && $t->notes[0]['text'] === 'Seen: No change needed.';
 })());
 
 // ------------------------------------------------------- bootstrap wiring

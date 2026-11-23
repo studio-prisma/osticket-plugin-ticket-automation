@@ -1,6 +1,6 @@
 # Ticket-Automation für osTicket
 
-Regeln, die Tickets umstellen, wenn etwas passiert: Ein Kunde antwortet, ein Mitleser schreibt, ein Agent antwortet oder schreibt eine Notiz, oder ein Fälligkeitsdatum ist erreicht. Jede Regel hat Auslöser, Bedingungen und Aktionen. Jede Ausführung, die am Ticket etwas tut, hinterlässt eine interne Notiz.
+Regeln, die Tickets umstellen, wenn etwas passiert: Ein Kunde antwortet, ein Mitleser schreibt, ein Agent antwortet oder schreibt eine Notiz, oder ein Fälligkeitsdatum ist erreicht. Jede Regel hat Auslöser, Bedingungen und Aktionen. Jede Ausführung, die das Ticket ändert, hinterlässt eine interne Notiz.
 
 Typischer Fall: Ein Ticket wartet auf den Kunden, der Kunde antwortet, das Ticket steht wieder auf „Offen“, ohne dass jemand es anfasst.
 
@@ -62,7 +62,7 @@ Alle müssen zutreffen. Leere Listen heißen „beliebig“.
 | Fälligkeitsdatum | Behalten, leeren oder auf jetzt plus 1 bis 365 Tage setzen |
 | Als unbeantwortet markieren | |
 | Agenten bei passiv zugeordneter Mail benachrichtigen | Schickt osTickets Benachrichtigung „Neue Nachricht“, wenn osTicket still geblieben ist, siehe unten. Nur Nachrichten von Kunde und Beteiligten |
-| Interne Notiz | Bei jeder Ausführung, außer bei einem Fälligkeits-Lauf, der nichts ändert (siehe unten). Vorlage mit Platzhaltern |
+| Interne Notiz | Wenn der Lauf etwas geändert hat. Eine Regel, deren einzige Aktion die Notiz ist, schreibt sie immer. Vorlage mit Platzhaltern |
 
 Es gibt keine Aktion, die dem Kunden mailt oder etwas löscht.
 
@@ -83,7 +83,9 @@ Ein geschlossenes Ticket lässt osTicket bei einer solchen Mail außerdem geschl
 
 Mit dem Fälligkeits-Auslöser muss die Regel ihre eigene Bedingung beenden: ein Zielstatus, der nicht unter den aktuellen Status ist, oder das Fälligkeitsdatum leeren oder verschieben. Sonst griffe der nächste Cron-Lauf dasselbe Ticket wieder; eine solche Regel lässt sich nicht speichern. Das Fälligkeitsdatum zu leeren zählt nur, wenn „Due date to check“ auf der Ticket-Fälligkeit steht: mit SLA-Rückfall bleibt das SLA-Datum fällig.
 
-Ein Fälligkeits-Lauf, der nichts ändert, weil osTicket den Status verweigert (Schließen mit offenen Aufgaben, fehlenden Pflichtfeldern oder fehlendem Help-Topic) oder weil nichts mehr zu ändern war, schreibt keine Notiz. Er schreibt eine Warnung mit dem Grund ins Systemlog, und die Regel lässt das Ticket in Ruhe, bis sich das Ticket ändert (Status, Fälligkeiten, jede Aktualisierung oder jeder Verlaufseintrag) oder die Regel bearbeitet wird, längstens 24 Stunden. Eine Fälligkeits-Regel, die die Prüfungen zur Laufzeit ablehnen, wird einmal am Tag geloggt.
+Ein Lauf, der nichts ändert, schreibt keine Notiz, egal bei welchem Auslöser: Die Aktionen hatten nichts mehr zu tun, oder osTicket hat sie verweigert. Hat osTicket eine Aktion verweigert, steht der Grund im Systemlog. Ein Teil-Lauf (eine Aktion angewendet, eine andere verweigert) schreibt seine Notiz wie bisher und nennt beides.
+
+Ein Fälligkeits-Lauf, der nichts ändert, weil osTicket den Status verweigert (Schließen mit offenen Aufgaben, fehlenden Pflichtfeldern oder fehlendem Help-Topic) oder weil nichts mehr zu ändern war, schreibt zusätzlich eine Warnung mit dem Grund ins Systemlog, und die Regel lässt das Ticket in Ruhe, bis sich das Ticket ändert (Status, Fälligkeiten, jede Aktualisierung oder jeder Verlaufseintrag) oder die Regel bearbeitet wird, längstens 24 Stunden. Eine Fälligkeits-Regel, die die Prüfungen zur Laufzeit ablehnen, wird einmal am Tag geloggt.
 
 ### Interne Notiz
 

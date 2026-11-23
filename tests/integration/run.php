@@ -419,8 +419,10 @@ step(array('action' => 'note', 'ticket' => $t['id'], 'staff' => $ADMIN));
 check('loop: agent note runs the rule once, its own note does not', count(autoNotes($t['id'])) === 1
     && entries($t['id']) === $before + 2 && (int) col($t['id'], 'isanswered') === 0, 'entries ' . entries($t['id']));
 step(array('action' => 'reply', 'ticket' => $t['id'], 'staff' => $ADMIN));
-check('loop: agent reply trigger when switched on, still no cascade', count(autoNotes($t['id'])) === 2
-    && entries($t['id']) === $before + 4);
+// The ticket is unanswered already: the rule has nothing to change, so
+// the reply gets no automation note.
+check('loop: agent reply with nothing to change, no note, no cascade', count(autoNotes($t['id'])) === 1
+    && entries($t['id']) === $before + 3, 'entries ' . entries($t['id']) . ', notes ' . count(autoNotes($t['id'])));
 
 // -------------------------------------------------------------- dry run
 
