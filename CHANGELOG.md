@@ -7,7 +7,7 @@ All notable changes to this project are documented here. Format: [Keep a Changel
 ### Changed
 
 - CI: all GitHub actions pinned to commit SHAs instead of tags; actionlint runs from the shared
-  action in `github-config-security-workflow` with checksum check (security workflow v1.2.0).
+  action in `github-config-security-workflow` with checksum check (security workflow v1.2.1).
 
 ## [0.4.0] - 2026-11-23
 
